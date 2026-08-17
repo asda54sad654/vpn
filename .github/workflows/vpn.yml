@@ -58,9 +58,10 @@ jobs:
           $secret = "fasjfajf09wjf9jawfj0j"
           $ports = @(443, 2053, 2083, 2087, 2096, 8443)
           
-          # شناسه ثابت برای این ریپازیتوری
-          # برای هر ریپازیتوری این رو عوض کن
+          # شناسه ثابت + نام دلخواه
           $serverId = "server1"
+          $customName = "hosseinDev"
+          $ps = "Server1_hosseinDev"
           
           foreach ($port in $ports) {
             $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
@@ -68,13 +69,15 @@ jobs:
             
             if ($url) {
               $domain = $url -replace '^https://', ''
-              $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":$port,`"type`":`"none`",`"tls`":`"tls`"}"
+              
+              # اضافه کردن ps (remark) به JSON
+              $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":$port,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"$ps`"}"
               $link = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
               
-              Write-Host "Sending: $serverId (Port: $port)"
+              Write-Host "Sending: $ps (Port: $port)"
               
               $body = @{ 
-                server_id = $serverId
+                server_id = "$serverId"
                 vmess = $link 
               } | ConvertTo-Json
               
