@@ -1,203 +1,62 @@
-name: VPN Full - Worker + Cloudflare (VLESS + VMess + Trojan)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: windows-latest
-    timeout-minutes: 360
-
-    steps:
-      - name: Install Xray and Cloudflared
+      - name: Update 3 Workers
         run: |
-          mkdir C:\Xray -Force
-          cd C:\Xray
-          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
-          Expand-Archive -Path "xray.zip" -DestinationPath "." -Force
-          Remove-Item "xray.zip" -Force
-          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-
-      - name: Create Xray Config (6 Inbounds - 3 Protocols)
-        run: |
-          cd C:\Xray
+          $apiToken = "${{ secrets.CF_API_TOKEN }}"
+          $accountId = "e96a2dd0c1de68077e282bab0f5e64af"
           
-          $config = @"
-          {
-            "inbounds": [
-              {
-                "listen": "0.0.0.0",
-                "port": 443,
-                "protocol": "vless",
-                "settings": {"clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}], "decryption": "none"},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2053,
-                "protocol": "vmess",
-                "settings": {"clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "alterId": 0, "email": "user1"}]},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2083,
-                "protocol": "trojan",
-                "settings": {"clients": [{"password": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}]},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2087,
-                "protocol": "vless",
-                "settings": {"clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}], "decryption": "none"},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2096,
-                "protocol": "vmess",
-                "settings": {"clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "alterId": 0, "email": "user1"}]},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 8443,
-                "protocol": "trojan",
-                "settings": {"clients": [{"password": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}]},
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              }
-            ],
-            "outbounds": [{"protocol": "freedom"}],
-            "policy": {"levels": {"0": {"bufferSize": 10240}}}
-          }
-          "@
-          
-          [System.IO.File]::WriteAllText("C:\Xray\config.json", $config)
-          Write-Host "Config created: 6 inbounds"
-
-      - name: Open Firewall
-        run: |
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          foreach ($port in $ports) {
-            netsh advfirewall firewall add rule name="Xray-$port" dir=in action=allow protocol=TCP localport=$port
-          }
-
-      - name: Start Xray
-        run: |
-          cd C:\Xray
-          Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config config.json" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-
-      - name: Start Cloudflared for All Ports
-        run: |
-          cd C:\Xray
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          foreach ($port in $ports) {
-            Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden
-            Start-Sleep -Seconds 2
-          }
-          Start-Sleep -Seconds 25
-
-      - name: Generate Cloudflare Links (Direct)
-        run: |
-          $uuid = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $secret = "fasjfajf09wjf9jawfj0j"
-          $serverId = "server1"
-          
-          # VLESS - Port 443
+          # Worker 1 - VLESS (Port 443)
           $log443 = Get-Content "C:\Xray\cf_out_443.txt", "C:\Xray\cf_err_443.txt" -Raw -ErrorAction SilentlyContinue
           $url443 = $log443 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
           
           if ($url443) {
-            $domain443 = $url443 -replace '^https://', ''
-            
-            $vlessLink = "vless://${uuid}@${domain443}:443?path=/&security=tls&encryption=none&type=ws#CF_VLESS_1"
-            $body = @{ server_id = $serverId; vmess = $vlessLink } | ConvertTo-Json
-            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-            Write-Host "Sent: CF_VLESS_1"
+            $workerCode1 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url443';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
+            [System.IO.File]::WriteAllText("C:\Xray\worker1.js", $workerCode1)
+            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker1.js"
+            Write-Host "Worker 1 (VLESS) updated"
           }
           
-          # VMess - Port 2053
+          # Worker 2 - VMess (Port 2053)
           $log2053 = Get-Content "C:\Xray\cf_out_2053.txt", "C:\Xray\cf_err_2053.txt" -Raw -ErrorAction SilentlyContinue
           $url2053 = $log2053 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
           
           if ($url2053) {
-            $domain2053 = $url2053 -replace '^https://', ''
-            $json = "{`"add`":`"$domain2053`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":2053,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"CF_VMess_1`"}"
-            $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
-            $body = @{ server_id = $serverId; vmess = $vmessLink } | ConvertTo-Json
-            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-            Write-Host "Sent: CF_VMess_1"
+            $workerCode2 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url2053';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
+            [System.IO.File]::WriteAllText("C:\Xray\worker2.js", $workerCode2)
+            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker-vmess" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker2.js"
+            Write-Host "Worker 2 (VMess) updated"
           }
           
-          # Trojan - Port 2083
+          # Worker 3 - Trojan (Port 2083)
           $log2083 = Get-Content "C:\Xray\cf_out_2083.txt", "C:\Xray\cf_err_2083.txt" -Raw -ErrorAction SilentlyContinue
           $url2083 = $log2083 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
           
           if ($url2083) {
-            $domain2083 = $url2083 -replace '^https://', ''
-            $trojanLink = "trojan://${uuid}@${domain2083}:2083?path=/&security=tls&type=ws#CF_Trojan_1"
-            $body = @{ server_id = $serverId; vmess = $trojanLink } | ConvertTo-Json
-            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-            Write-Host "Sent: CF_Trojan_1"
+            $workerCode3 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url2083';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
+            [System.IO.File]::WriteAllText("C:\Xray\worker3.js", $workerCode3)
+            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker-trojan" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker3.js"
+            Write-Host "Worker 3 (Trojan) updated"
           }
 
-      - name: Auto Update Worker
-        run: |
-          $apiToken = "${{ secrets.CF_API_TOKEN }}"
-          $accountId = "e96a2dd0c1de68077e282bab0f5e64af"
-          $workerName = "my-vpn-worker"
-          
-          # گرفتن URL پورت 443 برای Worker
-          $log = Get-Content "C:\Xray\cf_out_443.txt", "C:\Xray\cf_err_443.txt" -Raw -ErrorAction SilentlyContinue
-          $url = $log | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
-          
-          if ($url) {
-            $workerCode = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
-            
-            [System.IO.File]::WriteAllText("C:\Xray\worker.js", $workerCode)
-            
-            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/$workerName" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker.js"
-            
-            if ($response -match '"success":true') {
-              Write-Host "Worker updated"
-            }
-          }
-
-      - name: Generate Worker Links
+      - name: Generate Worker Links (3 Different Domains)
         run: |
           $uuid = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $secret = "fasjfajf09wjf9jawfj0j"
           $serverId = "server1"
-          $workerDomain = "my-vpn-worker.hosseinderees7.workers.dev"
           
-          # Worker VLESS
-          $vlessLink = "vless://${uuid}@${workerDomain}:443?path=/&security=tls&encryption=none&type=ws#WRK_VLESS_1"
+          # Worker 1 - VLESS
+          $domain1 = "my-vpn-worker.hosseinderees7.workers.dev"
+          $vlessLink = "vless://${uuid}@${domain1}:443?path=/&security=tls&encryption=none&type=ws#WRK_VLESS"
           $body = @{ server_id = $serverId; vmess = $vlessLink } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
           
-          # Worker VMess
-          $json = "{`"add`":`"$workerDomain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":443,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"WRK_VMess_1`"}"
+          # Worker 2 - VMess
+          $domain2 = "my-vpn-worker-vmess.hosseinderees7.workers.dev"
+          $json = "{`"add`":`"$domain2`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":443,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"WRK_VMess`"}"
           $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
           $body = @{ server_id = $serverId; vmess = $vmessLink } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
           
-          # Worker Trojan
-          $trojanLink = "trojan://${uuid}@${workerDomain}:443?path=/&security=tls&type=ws#WRK_Trojan_1"
+          # Worker 3 - Trojan
+          $domain3 = "my-vpn-worker-trojan.hosseinderees7.workers.dev"
+          $trojanLink = "trojan://${uuid}@${domain3}:443?path=/&security=tls&type=ws#WRK_Trojan"
           $body = @{ server_id = $serverId; vmess = $trojanLink } | ConvertTo-Json
           Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-          
-          Write-Host "All Worker links sent!"
-
-      - name: Keep Alive
-        run: |
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          for ($i = 1; $i -le 360; $i++) {
-            Start-Sleep -Seconds 60
-            $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
-            $cf = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
-            if (-not $xray) { Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config C:\Xray\config.json" -WindowStyle Hidden }
-            if (-not $cf) { foreach ($port in $ports) { Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden } }
-            Write-Host "[$i/360] Alive"
-          }
