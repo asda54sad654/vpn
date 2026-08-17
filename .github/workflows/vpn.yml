@@ -1,62 +1,117 @@
-      - name: Update 3 Workers
+      - name: Update 2 Workers (VMess + Trojan)
         run: |
-          $apiToken = "${{ secrets.CF_API_TOKEN }}"
-          $accountId = "e96a2dd0c1de68077e282bab0f5e64af"
+          # ==========================================
+          # ACCOUNT 1: VMess Worker
+          # ==========================================
+          $vmessToken = "${{ secrets.CF_TOKEN_VMESS }}"
+          $vmessAccountId = "e96a2dd0c1de68077e282bab0f5e64af"
           
-          # Worker 1 - VLESS (Port 443)
-          $log443 = Get-Content "C:\Xray\cf_out_443.txt", "C:\Xray\cf_err_443.txt" -Raw -ErrorAction SilentlyContinue
-          $url443 = $log443 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+          # لاگ Cloudflare Tunnel برای VMess (پورت 2053)
+          $logVmess = Get-Content "C:\Xray\cf_out_2053.txt", "C:\Xray\cf_err_2053.txt" -Raw -ErrorAction SilentlyContinue
+          $urlVmess = $logVmess | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
           
-          if ($url443) {
-            $workerCode1 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url443';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
-            [System.IO.File]::WriteAllText("C:\Xray\worker1.js", $workerCode1)
-            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker1.js"
-            Write-Host "Worker 1 (VLESS) updated"
-          }
-          
-          # Worker 2 - VMess (Port 2053)
-          $log2053 = Get-Content "C:\Xray\cf_out_2053.txt", "C:\Xray\cf_err_2053.txt" -Raw -ErrorAction SilentlyContinue
-          $url2053 = $log2053 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
-          
-          if ($url2053) {
-            $workerCode2 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url2053';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
-            [System.IO.File]::WriteAllText("C:\Xray\worker2.js", $workerCode2)
-            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker-vmess" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker2.js"
-            Write-Host "Worker 2 (VMess) updated"
-          }
-          
-          # Worker 3 - Trojan (Port 2083)
-          $log2083 = Get-Content "C:\Xray\cf_out_2083.txt", "C:\Xray\cf_err_2083.txt" -Raw -ErrorAction SilentlyContinue
-          $url2083 = $log2083 | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
-          
-          if ($url2083) {
-            $workerCode3 = "addEventListener('fetch', event => {`n  event.respondWith(handleRequest(event.request))`n})`n`nasync function handleRequest(request) {`n  const url = new URL(request.url);`n  const targetUrl = '$url2083';`n  const newUrl = targetUrl + url.pathname + url.search;`n  return fetch(new Request(newUrl, {`n    method: request.method,`n    headers: request.headers,`n    body: request.body`n  }));`n}"
-            [System.IO.File]::WriteAllText("C:\Xray\worker3.js", $workerCode3)
-            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$accountId/workers/scripts/my-vpn-worker-trojan" -H "Authorization: Bearer $apiToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker3.js"
-            Write-Host "Worker 3 (Trojan) updated"
+          if ($urlVmess) {
+            $workerCodeVmess = @"
+      addEventListener('fetch', event => {
+        event.respondWith(handleRequest(event.request))
+      })
+      
+      async function handleRequest(request) {
+        const url = new URL(request.url);
+        const targetUrl = '$urlVmess';
+        const newUrl = targetUrl + url.pathname + url.search;
+        return fetch(new Request(newUrl, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body
+        }));
+      }
+      "@
+            [System.IO.File]::WriteAllText("C:\Xray\worker-vmess.js", $workerCodeVmess)
+            
+            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$vmessAccountId/workers/scripts/vpn-vmess" -H "Authorization: Bearer $vmessToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker-vmess.js"
+            Write-Host "✅ Worker 1 (VMess) updated on account: $vmessAccountId"
+          } else {
+            Write-Host "❌ VMess URL not found! Check logs."
           }
 
-      - name: Generate Worker Links (3 Different Domains)
+          # ==========================================
+          # ACCOUNT 2: Trojan Worker
+          # ==========================================
+          $trojanToken = "${{ secrets.CF_TOKEN_TROJAN }}"
+          $trojanAccountId = "1d7e90e6cc00cc6ca5494f61cdd3e92d"
+          
+          # لاگ Cloudflare Tunnel برای Trojan (پورت 2083)
+          $logTrojan = Get-Content "C:\Xray\cf_out_2083.txt", "C:\Xray\cf_err_2083.txt" -Raw -ErrorAction SilentlyContinue
+          $urlTrojan = $logTrojan | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+          
+          if ($urlTrojan) {
+            $workerCodeTrojan = @"
+      addEventListener('fetch', event => {
+        event.respondWith(handleRequest(event.request))
+      })
+      
+      async function handleRequest(request) {
+        const url = new URL(request.url);
+        const targetUrl = '$urlTrojan';
+        const newUrl = targetUrl + url.pathname + url.search;
+        return fetch(new Request(newUrl, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body
+        }));
+      }
+      "@
+            [System.IO.File]::WriteAllText("C:\Xray\worker-trojan.js", $workerCodeTrojan)
+            
+            $response = & curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$trojanAccountId/workers/scripts/vpn-trojan" -H "Authorization: Bearer $trojanToken" -H "Content-Type: application/javascript" --data-binary "@C:\Xray\worker-trojan.js"
+            Write-Host "✅ Worker 2 (Trojan) updated on account: $trojanAccountId"
+          } else {
+            Write-Host "❌ Trojan URL not found! Check logs."
+          }
+
+      - name: Generate Worker Links (VMess + Trojan)
         run: |
           $uuid = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $secret = "fasjfajf09wjf9jawfj0j"
           $serverId = "server1"
           
-          # Worker 1 - VLESS
-          $domain1 = "my-vpn-worker.hosseinderees7.workers.dev"
-          $vlessLink = "vless://${uuid}@${domain1}:443?path=/&security=tls&encryption=none&type=ws#WRK_VLESS"
-          $body = @{ server_id = $serverId; vmess = $vlessLink } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+          # ==========================================
+          # VMess Link (Worker 1)
+          # ==========================================
+          $domainVmess = "vpn-vmess.hosseinderees7.workers.dev"  # این رو با دامنه‌ی واقعی ورکرت عوض کن
+          $jsonVmess = "{`"add`":`"$domainVmess`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":443,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"WRK_VMess`"}"
+          $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($jsonVmess))
           
-          # Worker 2 - VMess
-          $domain2 = "my-vpn-worker-vmess.hosseinderees7.workers.dev"
-          $json = "{`"add`":`"$domain2`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":443,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"WRK_VMess`"}"
-          $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+          # ارسال به هاست
           $body = @{ server_id = $serverId; vmess = $vmessLink } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+          try {
+            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+            Write-Host "✅ VMess link sent to host"
+          } catch {
+            Write-Host "❌ Failed to send VMess link: $_"
+          }
           
-          # Worker 3 - Trojan
-          $domain3 = "my-vpn-worker-trojan.hosseinderees7.workers.dev"
-          $trojanLink = "trojan://${uuid}@${domain3}:443?path=/&security=tls&type=ws#WRK_Trojan"
+          Write-Host "🔗 VMess Link: $vmessLink"
+
+          # ==========================================
+          # Trojan Link (Worker 2)
+          # ==========================================
+          $domainTrojan = "vpn-trojan.hosseinderees7.workers.dev"  # این رو با دامنه‌ی واقعی ورکرت عوض کن
+          $trojanLink = "trojan://${uuid}@${domainTrojan}:443?path=/&security=tls&type=ws#WRK_Trojan"
+          
+          # ارسال به هاست
           $body = @{ server_id = $serverId; vmess = $trojanLink } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+          try {
+            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+            Write-Host "✅ Trojan link sent to host"
+          } catch {
+            Write-Host "❌ Failed to send Trojan link: $_"
+          }
+          
+          Write-Host "🔗 Trojan Link: $trojanLink"
+          
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  ALL WORKERS UPDATED SUCCESSFULLY!" -ForegroundColor Cyan
+          Write-Host "==================================================" -ForegroundColor Green
