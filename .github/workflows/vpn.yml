@@ -59,7 +59,7 @@ jobs:
           $ports = @(443, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8443, 8880)
           
           $serverId = "server1"
-          $ps = "Server1_hosseinDev"
+          $ps = $serverId + "_hosseinDev"
           
           foreach ($port in $ports) {
             $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
