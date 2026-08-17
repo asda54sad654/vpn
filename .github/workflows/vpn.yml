@@ -1,194 +1,4 @@
-// ========== EDIT WORKFLOW (با ساخت خودکار) ==========
-app.get('/admin/servers/edit/:serverId', checkAuth, async (req, res) => {
-  const { serverId } = req.params;
-  const servers = getServers();
-  const server = servers.find(s => s.serverId === serverId);
-  
-  if (!server) {
-    return res.redirect('/admin/servers');
-  }
-  
-  try {
-    // تلاش برای خواندن فایل
-    let content = '';
-    let sha = '';
-    let exists = true;
-    
-    try {
-      const response = await axios.get(
-        `https://api.github.com/repos/${server.repo}/contents/.github/workflows/${server.workflow}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${server.token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        }
-      );
-      
-      content = Buffer.from(response.data.content, 'base64').toString('utf8');
-      sha = response.data.sha;
-    } catch (error) {
-      if (error.response && error.response.status === 404) {
-        // فایل وجود نداره - ساخت کد پیش‌فرض
-        exists = false;
-        content = getDefaultWorkflow();
-      } else {
-        throw error;
-      }
-    }
-    
-    res.send(`
-    <html>
-    <head>
-      <title>Edit Workflow - ${serverId}</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>
-        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #fff; }
-        .card { background: #16213e; padding: 20px; margin: 10px 0; border-radius: 8px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; margin: 5px; }
-        .btn-blue { background: #007bff; color: white; }
-        .btn-green { background: #00ff88; color: black; }
-        .btn-red { background: #ff4444; color: white; }
-        .btn-yellow { background: #ffaa00; color: black; }
-        textarea { width: 100%; height: 500px; background: #0f3460; color: #fff; border: 1px solid #333; border-radius: 4px; padding: 10px; font-family: monospace; font-size: 14px; box-sizing: border-box; }
-        .badge { padding: 5px 10px; border-radius: 4px; font-size: 12px; }
-        .badge-exists { background: #00ff88; color: black; }
-        .badge-new { background: #ffaa00; color: black; }
-      </style>
-    </head>
-    <body>
-      <h1>📝 Edit Workflow - ${serverId}</h1>
-      <a href="/admin/servers" class="btn btn-blue">← Back</a>
-      
-      <div class="card">
-        <h3>${server.repo}/.github/workflows/${server.workflow}</h3>
-        <p>
-          Status: ${exists ? 
-            '<span class="badge badge-exists">✅ File exists</span>' : 
-            '<span class="badge badge-new">🆕 New file - will be created</span>'
-          }
-        </p>
-        
-        <form method="POST" action="/admin/servers/save">
-          <input type="hidden" name="server_id" value="${serverId}">
-          <input type="hidden" name="sha" value="${sha}">
-          <input type="hidden" name="exists" value="${exists}">
-          
-          <h4>File path: .github/workflows/${server.workflow}</h4>
-          <textarea name="yaml_content">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea>
-          <br>
-          <button class="btn btn-green" type="submit">💾 Save to GitHub</button>
-          <a href="/admin/servers" class="btn btn-red">Cancel</a>
-        </form>
-      </div>
-    </body>
-    </html>
-    `);
-  } catch (error) {
-    res.send(`
-    <html>
-    <head>
-      <title>Error</title>
-      <style>
-        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #fff; }
-        .card { background: #16213e; padding: 20px; margin: 10px 0; border-radius: 8px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
-        .btn-blue { background: #007bff; color: white; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>❌ Error</h2>
-        <p>${error.message}</p>
-        <a href="/admin/servers" class="btn btn-blue">← Back</a>
-      </div>
-    </body>
-    </html>
-    `);
-  }
-});
-
-// ========== SAVE WORKFLOW (با ساخت خودکار) ==========
-app.post('/admin/servers/save', checkAuth, async (req, res) => {
-  const { server_id, sha, exists, yaml_content } = req.body;
-  const servers = getServers();
-  const server = servers.find(s => s.serverId === server_id);
-  
-  if (!server) {
-    return res.redirect('/admin/servers');
-  }
-  
-  try {
-    const url = `https://api.github.com/repos/${server.repo}/contents/.github/workflows/${server.workflow}`;
-    
-    const payload = {
-      message: exists === 'true' ? 'Update workflow from panel' : 'Create workflow from panel',
-      content: Buffer.from(yaml_content).toString('base64')
-    };
-    
-    // اگه فایل وجود داره، sha لازمه
-    if (exists === 'true' && sha) {
-      payload.sha = sha;
-    }
-    
-    await axios.put(url, payload, {
-      headers: {
-        'Authorization': `Bearer ${server.token}`,
-        'Accept': 'application/vnd.github.v3+json'
-      }
-    });
-    
-    res.send(`
-    <html>
-    <head>
-      <title>Saved!</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>
-        body { font-family: Arial; display: flex; justify-content: center; align-items: center; height: 100vh; background: #1a1a2e; color: #fff; }
-        .card { background: #16213e; padding: 30px; border-radius: 10px; text-align: center; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; margin: 10px; }
-        .btn-blue { background: #007bff; color: white; }
-        .btn-green { background: #00ff88; color: black; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>✅ Workflow Saved!</h2>
-        <p>${exists === 'true' ? 'Updated' : 'Created'} successfully in GitHub</p>
-        <a href="/admin/servers" class="btn btn-blue">← Back to Servers</a>
-        <a href="/admin/servers/edit/${server_id}" class="btn btn-green">Edit Again</a>
-      </div>
-    </body>
-    </html>
-    `);
-  } catch (error) {
-    res.send(`
-    <html>
-    <head>
-      <title>Error</title>
-      <style>
-        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #fff; }
-        .card { background: #16213e; padding: 20px; border-radius: 8px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-block; }
-        .btn-blue { background: #007bff; color: white; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>❌ Error Saving</h2>
-        <p>${error.message}</p>
-        ${error.response ? `<pre>${JSON.stringify(error.response.data, null, 2)}</pre>` : ''}
-        <a href="/admin/servers" class="btn btn-blue">← Back</a>
-      </div>
-    </body>
-    </html>
-    `);
-  }
-});
-
-// ========== Default Workflow ==========
-function getDefaultWorkflow() {
-  return `name: VPN Multi-Port
+name: VPN Multi-Port
 
 on:
   workflow_dispatch:
@@ -201,8 +11,8 @@ jobs:
     steps:
       - name: Install Xray and Cloudflared
         run: |
-          mkdir C:\\Xray -Force
-          cd C:\\Xray
+          mkdir C:\Xray -Force
+          cd C:\Xray
           Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath "." -Force
           Remove-Item "xray.zip" -Force
@@ -210,27 +20,34 @@ jobs:
 
       - name: Create Xray Config
         run: |
-          cd C:\\Xray
+          cd C:\Xray
           $ports = @(443, 2053, 2083, 2087, 2096, 8443)
           $inbounds = @()
           foreach ($port in $ports) {
-            $inbounds += "{`+"`"listen`"+`":`"+`"0.0.0.0`"+`",`"+`"port`"+`":$port,`"+`"protocol`"+`":`"+`"vmess`"+`",`"+`"settings`"+`":{`"+`"clients`"+`":[{`"+`"id`"+`":`"+`"5aa2ebe1-5114-4bc3-aefa-935807433e70`"+`",`"+`"alterId`"+`":0}]},`"+`"streamSettings`"+`":{`"+`"network`"+`":`"+`"ws`"+`",`"+`"wsSettings`"+`":{`"+`"path`"+`":`"+`"/`"+`"}}}"
+            $inbounds += "{`"listen`":`"0.0.0.0`",`"port`":$port,`"protocol`":`"vmess`",`"settings`":{`"clients`":[{`"id`":`"5aa2ebe1-5114-4bc3-aefa-935807433e70`",`"alterId`":0}]},`"streamSettings`":{`"network`":`"ws`",`"wsSettings`":{`"path`":`"/`"}}}"
           }
-          $config = "{`+"`"inbounds`"+`":[" + ($inbounds -join ",") + "],`+"`"outbounds`"+`":[{`+"`"protocol`"+`":`+"`"freedom`"+`"}]}"
-          [System.IO.File]::WriteAllText("C:\\Xray\\config.json", $config)
+          $config = "{`"inbounds`":[" + ($inbounds -join ",") + "],`"outbounds`":[{`"protocol`":`"freedom`"}],`"policy`":{`"levels`":{`"0`":{`"bufferSize`":10240}}}}"
+          [System.IO.File]::WriteAllText("C:\Xray\config.json", $config)
+
+      - name: Open Firewall
+        run: |
+          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
+          foreach ($port in $ports) {
+            netsh advfirewall firewall add rule name="Xray-$port" dir=in action=allow protocol=TCP localport=$port
+          }
 
       - name: Start Xray
         run: |
-          cd C:\\Xray
-          Start-Process -FilePath "C:\\Xray\\xray.exe" -ArgumentList "-config config.json" -WindowStyle Hidden
+          cd C:\Xray
+          Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config config.json" -WindowStyle Hidden
           Start-Sleep -Seconds 5
 
       - name: Start Cloudflared
         run: |
-          cd C:\\Xray
+          cd C:\Xray
           $ports = @(443, 2053, 2083, 2087, 2096, 8443)
           foreach ($port in $ports) {
-            Start-Process cmd -ArgumentList '/c', "C:\\Xray\\cloudflared.exe tunnel --url localhost:$port > C:\\Xray\\cf_out_$port.txt 2> C:\\Xray\\cf_err_$port.txt" -WindowStyle Hidden
+            Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden
             Start-Sleep -Seconds 2
           }
           Start-Sleep -Seconds 20
@@ -242,11 +59,11 @@ jobs:
           $ports = @(443, 2053, 2083, 2087, 2096, 8443)
           $index = 1
           foreach ($port in $ports) {
-            $log = Get-Content "C:\\Xray\\cf_out_$port.txt", "C:\\Xray\\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
+            $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
             $url = $log | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
             if ($url) {
               $domain = $url -replace '^https://', ''
-              $json = "{`+"`"add`"+`":`"+`"$domain`"+`",`"+`"aid`"+`":0,`"+`"id`"+`":`"+`"$uuid`"+`",`"+`"net`"+`":`"+`"ws`"+`",`"+`"path`"+`":`"+`"/`"+`",`"+`"port`"+`":$port,`"+`"type`"+`":`"+`"none`"+`",`"+`"tls`"+`":`"+`"tls`"+`"}"
+              $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":$port,`"type`":`"none`",`"tls`":`"tls`"}"
               $link = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
               $body = @{ server_id = "server$index"; vmess = $link } | ConvertTo-Json
               Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
@@ -258,7 +75,9 @@ jobs:
         run: |
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
+            $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
+            $cf = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
+            if (-not $xray) { Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config C:\Xray\config.json" -WindowStyle Hidden }
+            if (-not $cf) { $ports = @(443, 2053, 2083, 2087, 2096, 8443); foreach ($port in $ports) { Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden } }
             Write-Host "[$i/360] Alive"
           }
-`;
-}
