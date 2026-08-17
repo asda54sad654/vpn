@@ -1,4 +1,4 @@
-name: VPN Mixed VLESS + VMess
+name: VPN Mixed VLESS + VMess + Trojan
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
           Remove-Item "xray.zip" -Force
           Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
-      - name: Create Xray Config (3 VLESS + 3 VMess)
+      - name: Create Xray Config (VLESS + VMess + Trojan)
         run: |
           cd C:\Xray
           
@@ -33,54 +33,27 @@ jobs:
                   "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}],
                   "decryption": "none"
                 },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}
               },
               {
                 "listen": "0.0.0.0",
-                "port": 2053,
-                "protocol": "vless",
-                "settings": {
-                  "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}],
-                  "decryption": "none"
-                },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2083,
-                "protocol": "vless",
-                "settings": {
-                  "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}],
-                  "decryption": "none"
-                },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 2087,
+                "port": 443,
                 "protocol": "vmess",
                 "settings": {
                   "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "alterId": 0, "email": "user1"}]
                 },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}
               },
               {
                 "listen": "0.0.0.0",
-                "port": 2096,
-                "protocol": "vmess",
+                "port": 443,
+                "protocol": "trojan",
                 "settings": {
-                  "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "alterId": 0, "email": "user1"}]
+                  "clients": [
+                    {"password": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "email": "user1"}
+                  ]
                 },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 8443,
-                "protocol": "vmess",
-                "settings": {
-                  "clients": [{"id": "5aa2ebe1-5114-4bc3-aefa-935807433e70", "alterId": 0, "email": "user1"}]
-                },
-                "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}
               }
             ],
             "outbounds": [{"protocol": "freedom"}],
@@ -89,14 +62,11 @@ jobs:
           "@
           
           [System.IO.File]::WriteAllText("C:\Xray\config.json", $config)
-          Write-Host "Config created: 3 VLESS + 3 VMess"
+          Write-Host "Config created: VLESS + VMess + Trojan"
 
       - name: Open Firewall
         run: |
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          foreach ($port in $ports) {
-            netsh advfirewall firewall add rule name="Xray-$port" dir=in action=allow protocol=TCP localport=$port
-          }
+          netsh advfirewall firewall add rule name="Xray-443" dir=in action=allow protocol=TCP localport=443
 
       - name: Start Xray
         run: |
@@ -107,68 +77,51 @@ jobs:
       - name: Start Cloudflared
         run: |
           cd C:\Xray
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          foreach ($port in $ports) {
-            Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden
-            Start-Sleep -Seconds 2
-          }
+          Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:443 > C:\Xray\cf_out.txt 2> C:\Xray\cf_err.txt" -WindowStyle Hidden
           Start-Sleep -Seconds 20
+          
+          $log = Get-Content "C:\Xray\cf_out.txt", "C:\Xray\cf_err.txt" -Raw -ErrorAction SilentlyContinue
+          $url = $log | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+          
+          if ($url) {
+            Write-Host "URL: $url"
+            Write-Output "CLOUDFLARE_URL=$url" >> $env:GITHUB_ENV
+          }
 
-      - name: Generate Mixed Links
+      - name: Generate Links
         run: |
           $uuid = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $secret = "fasjfajf09wjf9jawfj0j"
           $serverId = "server1"
+          $cloudflareUrl = "$env:CLOUDFLARE_URL"
           
-          # VLESS Ports
-          $vlessPorts = @(443, 2053, 2083)
-          # VMess Ports
-          $vmessPorts = @(2087, 2096, 8443)
-          
-          $vlessIndex = 1
-          $vmessIndex = 1
-          
-          # Generate VLESS Links
-          foreach ($port in $vlessPorts) {
-            $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
-            $url = $log | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+          if ($cloudflareUrl) {
+            $domain = $cloudflareUrl -replace '^https://', ''
             
-            if ($url) {
-              $domain = $url -replace '^https://', ''
-              $ps = "Server1_VLESS_$vlessIndex"
-              $vlessLink = "vless://${uuid}@${domain}:${port}?path=/&security=tls&encryption=none&type=ws#${ps}"
-              
-              Write-Host "VLESS $vlessIndex (Port $port): $vlessLink"
-              
-              $body = @{ server_id = $serverId; vmess = $vlessLink } | ConvertTo-Json
-              Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-              $vlessIndex++
-            }
-          }
-          
-          # Generate VMess Links
-          foreach ($port in $vmessPorts) {
-            $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
-            $url = $log | Select-String -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+            # VLESS Link
+            $vlessLink = "vless://${uuid}@${domain}:443?path=%2Fvless&security=tls&encryption=none&type=ws#Server1_VLESS"
+            Write-Host "VLESS: $vlessLink"
+            $body = @{ server_id = $serverId; vmess = $vlessLink } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
             
-            if ($url) {
-              $domain = $url -replace '^https://', ''
-              $ps = "Server1_VMess_$vmessIndex"
-              $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":$port,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"$ps`"}"
-              $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
-              
-              Write-Host "VMess $vmessIndex (Port $port): $vmessLink"
-              
-              $body = @{ server_id = $serverId; vmess = $vmessLink } | ConvertTo-Json
-              Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
-              $vmessIndex++
-            }
+            # VMess Link
+            $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/vmess`",`"port`":443,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"Server1_VMess`"}"
+            $vmessLink = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+            Write-Host "VMess: $vmessLink"
+            $body = @{ server_id = $serverId; vmess = $vmessLink } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+            
+            # Trojan Link
+            $trojanLink = "trojan://${uuid}@${domain}:443?path=%2Ftrojan&security=tls&type=ws#Server1_Trojan"
+            Write-Host "Trojan: $trojanLink"
+            $body = @{ server_id = $serverId; vmess = $trojanLink } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json"
+            
+            Write-Host "✅ All 3 links sent!"
           }
 
       - name: Keep Alive
         run: |
-          $ports = @(443, 2053, 2083, 2087, 2096, 8443)
-          
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
             
@@ -177,12 +130,10 @@ jobs:
               Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config C:\Xray\config.json" -WindowStyle Hidden
             }
             
-            $cfCount = (Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue).Count
-            if ($cfCount -lt $ports.Count) {
-              foreach ($port in $ports) {
-                Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:$port > C:\Xray\cf_out_$port.txt 2> C:\Xray\cf_err_$port.txt" -WindowStyle Hidden
-              }
+            $cf = Get-Process -Name "cloudflared" -ErrorAction SilentlyContinue
+            if (-not $cf) {
+              Start-Process cmd -ArgumentList '/c', "C:\Xray\cloudflared.exe tunnel --url localhost:443 > C:\Xray\cf_out.txt 2> C:\Xray\cf_err.txt" -WindowStyle Hidden
             }
             
-            Write-Host "[$i/360] Alive - Xray: $(if($xray){'OK'}else{'Restarted'}) | CF: $cfCount/$($ports.Count)"
+            Write-Host "[$i/360] Alive"
           }
