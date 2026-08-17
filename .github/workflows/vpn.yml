@@ -1,4 +1,4 @@
-name: VPN Multi-Port
+name: VPN VLESS Cloudflare Multi-Port
 
 on:
   workflow_dispatch:
@@ -18,16 +18,17 @@ jobs:
           Remove-Item "xray.zip" -Force
           Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
-      - name: Create Xray Config
+      - name: Create VLESS Config
         run: |
           cd C:\Xray
           $ports = @(443, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8443, 8880)
           $inbounds = @()
           foreach ($port in $ports) {
-            $inbounds += "{`"listen`":`"0.0.0.0`",`"port`":$port,`"protocol`":`"vmess`",`"settings`":{`"clients`":[{`"id`":`"5aa2ebe1-5114-4bc3-aefa-935807433e70`",`"alterId`":0}]},`"streamSettings`":{`"network`":`"ws`",`"wsSettings`":{`"path`":`"/`"}}}"
+            $inbounds += "{`"listen`":`"0.0.0.0`",`"port`":$port,`"protocol`":`"vless`",`"settings`":{`"clients`":[{`"id`":`"5aa2ebe1-5114-4bc3-aefa-935807433e70`",`"email`":`"user1`"}],`"decryption`":`"none`"},`"streamSettings`":{`"network`":`"ws`",`"wsSettings`":{`"path`":`"/`"}}}"
           }
           $config = "{`"inbounds`":[" + ($inbounds -join ",") + "],`"outbounds`":[{`"protocol`":`"freedom`"}],`"policy`":{`"levels`":{`"0`":{`"bufferSize`":10240}}}}"
           [System.IO.File]::WriteAllText("C:\Xray\config.json", $config)
+          Write-Host "Config created with $($ports.Count) VLESS ports"
 
       - name: Open Firewall
         run: |
@@ -41,6 +42,16 @@ jobs:
           cd C:\Xray
           Start-Process -FilePath "C:\Xray\xray.exe" -ArgumentList "-config config.json" -WindowStyle Hidden
           Start-Sleep -Seconds 5
+          
+          $ports = @(443, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8443, 8880)
+          foreach ($port in $ports) {
+            $open = netstat -ano | findstr ":$port "
+            if ($open) {
+              Write-Host "✅ Port $port is OPEN"
+            } else {
+              Write-Host "❌ Port $port failed"
+            }
+          }
 
       - name: Start Cloudflared
         run: |
@@ -51,15 +62,16 @@ jobs:
             Start-Sleep -Seconds 2
           }
           Start-Sleep -Seconds 20
+          Write-Host "All tunnels started"
 
-      - name: Generate Links and Send to Host
+      - name: Generate VLESS Links
         run: |
           $uuid = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $secret = "fasjfajf09wjf9jawfj0j"
           $ports = @(443, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8443, 8880)
-          
           $serverId = "server1"
-          $ps = $serverId + "_hosseinDev"
+          $ps = "Server1_hosseinDev"
+          $successCount = 0
           
           foreach ($port in $ports) {
             $log = Get-Content "C:\Xray\cf_out_$port.txt", "C:\Xray\cf_err_$port.txt" -Raw -ErrorAction SilentlyContinue
@@ -67,24 +79,36 @@ jobs:
             
             if ($url) {
               $domain = $url -replace '^https://', ''
-              $json = "{`"add`":`"$domain`",`"aid`":0,`"id`":`"$uuid`",`"net`":`"ws`",`"path`":`"/`",`"port`":$port,`"type`":`"none`",`"tls`":`"tls`",`"ps`":`"$ps`"}"
-              $link = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
               
-              Write-Host "Sending: $ps (Port: $port)"
+              # VLESS Link
+              $vlessLink = "vless://$uuid@$domain`:$port?path=/&security=tls&encryption=none&type=ws#$ps"
+              
+              Write-Host ""
+              Write-Host "=================================================="
+              Write-Host "  Port: $port"
+              Write-Host "  URL: $url"
+              Write-Host "  Link: $vlessLink"
+              Write-Host "=================================================="
               
               $body = @{ 
                 server_id = $serverId
-                vmess = $link 
+                vmess = $vlessLink
               } | ConvertTo-Json
               
               try {
                 Invoke-RestMethod -Uri "https://miradig.ir/update" -Method Post -Headers @{ Authorization = "Bearer $secret" } -Body $body -ContentType "application/json" -TimeoutSec 15
                 Write-Host "✅ Sent"
+                $successCount++
               } catch {
                 Write-Host "❌ Failed"
               }
             }
           }
+          
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "  Total: $successCount links sent"
+          Write-Host "=================================================="
 
       - name: Keep Alive
         run: |
