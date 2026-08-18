@@ -1,4 +1,4 @@
-name: Shadowsocks + Cloudflare Tunnel
+name: SS Test
 
 on:
   workflow_dispatch:
@@ -9,108 +9,51 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install Shadowsocks and Cloudflared
+      - name: Install
         run: |
           mkdir -p ss
           cd ss
-          
-          # دانلود Shadowsocks-rust
           wget -qO ss.tar.xz "https://github.com/shadowsocks/shadowsocks-rust/releases/latest/download/shadowsocks-v1.21.0.x86_64-unknown-linux-gnu.tar.xz"
           tar -xJf ss.tar.xz
-          rm ss.tar.xz
           chmod +x ss-server
-          
-          # دانلود Cloudflared
           wget -qO cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
           chmod +x cloudflared
-          
-          echo "✅ نصب شد"
+          echo "✅ Done"
 
-      - name: Create Shadowsocks Config
+      - name: Config
         run: |
           cd ss
-          PASSWORD="5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          
-          cat <<EOF > config.json
+          cat > config.json << 'EOF'
           {
             "server": "0.0.0.0",
             "server_port": 8388,
-            "password": "${PASSWORD}",
+            "password": "5aa2ebe1-5114-4bc3-aefa-935807433e70",
             "method": "aes-256-gcm",
             "fast_open": false,
             "mode": "tcp_only"
           }
           EOF
-          echo "✅ کانفیگ ساخته شد"
 
-      - name: Start Shadowsocks
+      - name: Run SS
         run: |
           cd ss
           ./ss-server -c config.json &
           sleep 3
-          if pgrep -f "ss-server" > /dev/null; then 
-            echo "✅ Shadowsocks started"
-          else 
-            echo "❌ Shadowsocks failed"
-            exit 1
-          fi
+          pgrep ss-server || exit 1
 
-      - name: Start Cloudflared
+      - name: Run CF
         run: |
           cd ss
-          ./cloudflared tunnel --url http://localhost:8388 --protocol http2 > cf_out.txt 2> cf_err.txt &
+          ./cloudflared tunnel --url http://localhost:8388 --protocol http2 &
           sleep 15
-          if pgrep -f "cloudflared tunnel" > /dev/null; then
-            echo "✅ Cloudflared started"
-          else
-            echo "❌ Cloudflared failed"
-            exit 1
-          fi
 
-      - name: Get URL
+      - name: Get Link
         run: |
           cd ss
-          sleep 5
-          URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' cf_err.txt | head -n 1)
+          URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1)
           if [ -z "$URL" ]; then
-            cat cf_err.txt
+            echo "No URL found"
             exit 1
           fi
-          echo "TUNNEL_URL=$URL" >> $GITHUB_ENV
-          echo "URL: $URL"
-
-      - name: Generate Link
-        run: |
-          PASSWORD="5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          DOMAIN=$(echo "${{ env.TUNNEL_URL }}" | sed 's|https://||')
-          
-          # لینک Shadowsocks
-          SS_LINK="ss://$(echo -n "aes-256-gcm:${PASSWORD}@${DOMAIN}:443" | base64 -w 0)"
-          
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ Shadowsocks + Cloudflared"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "🔹 لینک Shadowsocks:"
-          echo "$SS_LINK"
-          echo ""
-          echo "🔹 تنظیمات دستی:"
-          echo "   آدرس: $DOMAIN"
-          echo "   پورت: 443"
-          echo "   رمز عبور: $PASSWORD"
-          echo "   روش رمزگذاری: aes-256-gcm"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-      - name: Keep Alive
-        run: |
-          cd ss
-          for i in {1..360}; do
-            sleep 60
-            if ! pgrep -f "ss-server" > /dev/null; then
-              ./ss-server -c config.json &
-            fi
-            if ! pgrep -f "cloudflared tunnel" > /dev/null; then
-              ./cloudflared tunnel --url http://localhost:8388 --protocol http2 > cf_out.txt 2> cf_err.txt &
-            fi
-            echo "[$i/360] Alive"
-          done
+          DOMAIN=$(echo $URL | sed 's|https://||')
+          echo "ss://$(echo -n "aes-256-gcm:5aa2ebe1-5114-4bc3-aefa-935807433e70@${DOMAIN}:443" | base64 -w 0)"
