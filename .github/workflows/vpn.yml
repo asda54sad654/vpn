@@ -14,10 +14,10 @@ jobs:
           mkdir -p ss
           cd ss
           
-          # دانلود Shadowsocks-rust (نسخه جدید و سریع)
-          wget -qO ss.zip "https://github.com/shadowsocks/shadowsocks-rust/releases/latest/download/shadowsocks-v1.21.0.x86_64-unknown-linux-gnu.tar.xz"
-          tar -xJf ss.zip
-          rm ss.zip
+          # دانلود Shadowsocks-rust
+          wget -qO ss.tar.xz "https://github.com/shadowsocks/shadowsocks-rust/releases/latest/download/shadowsocks-v1.21.0.x86_64-unknown-linux-gnu.tar.xz"
+          tar -xJf ss.tar.xz
+          rm ss.tar.xz
           chmod +x ss-server
           
           # دانلود Cloudflared
@@ -84,8 +84,8 @@ jobs:
           PASSWORD="5aa2ebe1-5114-4bc3-aefa-935807433e70"
           DOMAIN=$(echo "${{ env.TUNNEL_URL }}" | sed 's|https://||')
           
-          # لینک Shadowsocks (با رمزگذاری base64)
-          SS_LINK="ss://$(echo -n "aes-256-gcm:${PASSWORD}@${DOMAIN}:443" | base64 -w 0)#Shadowsocks_CF"
+          # لینک Shadowsocks
+          SS_LINK="ss://$(echo -n "aes-256-gcm:${PASSWORD}@${DOMAIN}:443" | base64 -w 0)"
           
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ Shadowsocks + Cloudflared"
