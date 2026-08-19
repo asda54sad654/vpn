@@ -1,4 +1,4 @@
-name: Windows Cloud RDP + Full VPN Suite
+name: Windows Cloud RDP + Reality
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # ==========================================
-      # بخش ۱: RDP و Tailscale
+      # بخش ۱: RDP و Tailscale (دقیقاً مثل کد خودت)
       # ==========================================
       - name: 1. Enable Remote Desktop & Firewall
         run: |
@@ -32,7 +32,7 @@ jobs:
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-vpn-server"
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
           Start-Sleep -Seconds 8
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
 
@@ -42,12 +42,13 @@ jobs:
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
           Write-Host "  Username     : CynetAdmin" -ForegroundColor Yellow
           Write-Host "  Password     : Cynet@2026" -ForegroundColor Yellow
+          Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
           echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
 
       # ==========================================
-      # بخش ۲: نصب Xray
+      # بخش ۲: نصب Xray و Reality
       # ==========================================
       - name: 4. Install Xray
         run: |
@@ -58,13 +59,22 @@ jobs:
           Remove-Item xray.zip -Force
           Write-Host "✅ Xray installed"
 
-      - name: 5. Create Reality Config (with fixed keys)
+      - name: 5. Generate Reality Keys
+        run: |
+          cd C:\xray
+          $keys = .\xray.exe x25519
+          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
+          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
+
+          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
+          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
+          Write-Host "✅ Keys generated"
+
+      - name: 6. Create Reality Config
         run: |
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-
-          # کلیدهای ثابت (از قبل تولید شده)
-          $PRIVATE_KEY = "mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7m"
-          $PUBLIC_KEY = "nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8"
+          $PRIVATE_KEY = $env:PRIVATE_KEY
+          $TAILSCALE_IP = $env:TAILSCALE_IP
 
           $config = @"
           {
@@ -97,46 +107,36 @@ jobs:
           [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
           Write-Host "✅ Reality config created"
 
-      - name: 6. Start Reality Server
+      - name: 7. Start Reality Server
         run: |
           cd C:\xray
           Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
           Start-Sleep -Seconds 5
+          Write-Host "✅ Reality server started on port 8443"
 
-          # چک کن که روشن شده
-          $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
-          if ($xray) {
-            Write-Host "✅ Reality server started on port 8443"
-          } else {
-            Write-Host "❌ Reality server failed to start"
-            exit 1
-          }
-
-      - name: 7. Show Reality Link
+      - name: 8. Show Reality Link
         run: |
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PUBLIC_KEY = "nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8"
+          $PUBLIC_KEY = $env:PUBLIC_KEY
           $TAILSCALE_IP = $env:TAILSCALE_IP
 
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> REALITY LINK (via Tailscale) <<<" -ForegroundColor Cyan
           Write-Host ""
-          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_TS" -ForegroundColor Yellow
+          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Server" -ForegroundColor Yellow
           Write-Host ""
           Write-Host "  Port: 8443" -ForegroundColor Yellow
           Write-Host "  UUID: $UUID" -ForegroundColor Yellow
-          Write-Host "  PublicKey: $PUBLIC_KEY" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-      - name: 8. Keep Alive (6 Hours)
+      - name: 9. Keep Alive (6 Hours)
         run: |
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
             $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
             if (-not $xray) {
               Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config C:\xray\config.json" -WindowStyle Hidden
-              Write-Host "[$i/360] Xray restarted"
             }
             Write-Host "[$i/360] Server running..."
           }
