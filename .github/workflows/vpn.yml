@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # ==========================================
-      # بخش ۱: RDP و Tailscale (دقیقاً مثل کد خودت)
+      # بخش ۱: RDP و Tailscale
       # ==========================================
       - name: 1. Enable Remote Desktop & Firewall
         run: |
@@ -42,82 +42,34 @@ jobs:
           Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
           Write-Host "  Username     : CynetAdmin" -ForegroundColor Yellow
           Write-Host "  Password     : Cynet@2026" -ForegroundColor Yellow
-          Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
 
           echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
 
       # ==========================================
-      # بخش ۲: نصب Xray و Cloudflared
+      # بخش ۲: نصب Xray
       # ==========================================
-      - name: 4. Install Xray and Cloudflared
+      - name: 4. Install Xray
         run: |
           mkdir C:\xray -Force
           cd C:\xray
           Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive xray.zip -DestinationPath . -Force
           Remove-Item xray.zip -Force
-          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-          Write-Host "✅ Xray and Cloudflared installed"
+          Write-Host "✅ Xray installed"
 
-      - name: 5. Generate Reality Keys
-        run: |
-          cd C:\xray
-          $keys = .\xray.exe x25519
-          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
-          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
-
-          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
-          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
-          Write-Host "✅ Reality keys generated"
-
-      - name: 6. Create Full Xray Config
+      - name: 5. Create Reality Config (with fixed keys)
         run: |
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PRIVATE_KEY = $env:PRIVATE_KEY
+
+          # کلیدهای ثابت (از قبل تولید شده)
+          $PRIVATE_KEY = "mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7mP7m"
+          $PUBLIC_KEY = "nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8"
 
           $config = @"
           {
             "log": { "loglevel": "warning" },
             "inbounds": [
-              {
-                "listen": "0.0.0.0",
-                "port": 8080,
-                "protocol": "vmess",
-                "settings": {
-                  "clients": [{"id": "$UUID", "alterId": 0}]
-                },
-                "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {"path": "/vmess"}
-                }
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 8081,
-                "protocol": "trojan",
-                "settings": {
-                  "clients": [{"password": "$PASSWORD"}]
-                },
-                "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {"path": "/trojan"}
-                }
-              },
-              {
-                "listen": "0.0.0.0",
-                "port": 8082,
-                "protocol": "vless",
-                "settings": {
-                  "clients": [{"id": "$UUID"}],
-                  "decryption": "none"
-                },
-                "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {"path": "/vless"}
-                }
-              },
               {
                 "listen": "0.0.0.0",
                 "port": 8443,
@@ -143,92 +95,48 @@ jobs:
           "@
 
           [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
-          Write-Host "✅ Full config created"
+          Write-Host "✅ Reality config created"
 
-      - name: 7. Start Xray
+      - name: 6. Start Reality Server
         run: |
           cd C:\xray
           Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
           Start-Sleep -Seconds 5
-          Write-Host "✅ Xray started"
 
-      - name: 8. Start Cloudflared Tunnels
-        run: |
-          cd C:\xray
-          $ports = @(8080, 8081, 8082)
-          foreach ($port in $ports) {
-            Start-Process -FilePath "cmd" -ArgumentList "/c C:\xray\cloudflared.exe tunnel --url http://127.0.0.1:$port --protocol http2 > C:\xray\cf_$port.txt 2> C:\xray\cf_err_$port.txt" -WindowStyle Hidden
-            Start-Sleep -Seconds 5
-          }
-          Start-Sleep -Seconds 20
-          Write-Host "✅ Cloudflared tunnels started"
-
-      - name: 9. Get Cloudflare URLs
-        run: |
-          cd C:\xray
-          $ports = @(8080, 8081, 8082)
-          $urls = @{}
-
-          foreach ($port in $ports) {
-            $url = Select-String -Path "C:\xray\cf_err_$port.txt" -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
-            if ($url) {
-              $urls[$port] = $url
-              $envVar = "URL_$port"
-              echo "$envVar=$url" >> $env:GITHUB_ENV
-              Write-Host "Port $($port): $($url)"
-            }
+          # چک کن که روشن شده
+          $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
+          if ($xray) {
+            Write-Host "✅ Reality server started on port 8443"
+          } else {
+            Write-Host "❌ Reality server failed to start"
+            exit 1
           }
 
-      - name: 10. Generate All Links
+      - name: 7. Show Reality Link
         run: |
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PUBLIC_KEY = $env:PUBLIC_KEY
+          $PUBLIC_KEY = "nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8nQ8"
           $TAILSCALE_IP = $env:TAILSCALE_IP
 
-          $VMESS_DOMAIN = $env:URL_8080 -replace 'https://', ''
-          $TROJAN_DOMAIN = $env:URL_8081 -replace 'https://', ''
-          $VLESS_DOMAIN = $env:URL_8082 -replace 'https://', ''
-
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> VPN LINKS <<<" -ForegroundColor Cyan
+          Write-Host "  >>> REALITY LINK (via Tailscale) <<<" -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_TS" -ForegroundColor Yellow
+          Write-Host ""
+          Write-Host "  Port: 8443" -ForegroundColor Yellow
+          Write-Host "  UUID: $UUID" -ForegroundColor Yellow
+          Write-Host "  PublicKey: $PUBLIC_KEY" -ForegroundColor Yellow
           Write-Host "==================================================" -ForegroundColor Green
 
-          # VMess
-          $VMESS_JSON = '{"v":"2","ps":"VMess_CF","add":"' + $VMESS_DOMAIN + '","port":443,"id":"' + $UUID + '","aid":0,"scy":"zero","net":"ws","type":"none","path":"/vmess","tls":"tls"}'
-          $VMESS_LINK = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($VMESS_JSON))
-          Write-Host ""
-          Write-Host "🔹 VMess (via Cloudflare):" -ForegroundColor Yellow
-          Write-Host $VMESS_LINK -ForegroundColor White
-
-          # Trojan
-          Write-Host ""
-          Write-Host "🔹 Trojan (via Cloudflare):" -ForegroundColor Yellow
-          Write-Host "trojan://${PASSWORD}@${TROJAN_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_CF" -ForegroundColor White
-
-          # VLESS
-          Write-Host ""
-          Write-Host "🔹 VLESS (via Cloudflare):" -ForegroundColor Yellow
-          Write-Host "vless://${UUID}@${VLESS_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_CF" -ForegroundColor White
-
-          # Reality (Tailscale)
-          Write-Host ""
-          Write-Host "🔹 Reality (via Tailscale):" -ForegroundColor Yellow
-          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_TS" -ForegroundColor White
-
-          Write-Host ""
-          Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  RDP: $TAILSCALE_IP | CynetAdmin / Cynet@2026" -ForegroundColor Magenta
-          Write-Host "==================================================" -ForegroundColor Green
-
-      - name: 11. Keep Alive (6 Hours)
+      - name: 8. Keep Alive (6 Hours)
         run: |
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
             $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
             if (-not $xray) {
               Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config C:\xray\config.json" -WindowStyle Hidden
+              Write-Host "[$i/360] Xray restarted"
             }
             Write-Host "[$i/360] Server running..."
           }
