@@ -25,7 +25,7 @@ jobs:
           $keys = .\xray.exe x25519
           $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' })
           $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' })
-          
+
           echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
           echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
 
@@ -34,7 +34,7 @@ jobs:
           cd C:\xray
           $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          
+
           $config = @"
           {
             "log": { "loglevel": "warning" },
@@ -52,7 +52,7 @@ jobs:
             "outbounds": [{"protocol": "freedom"}]
           }
           "@
-          
+
           [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
           echo "Config created"
 
@@ -78,12 +78,13 @@ jobs:
         run: |
           cd C:\xray
           $ports = @(8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
-          
+
           foreach ($port in $ports) {
             $url = Select-String -Path "C:\xray\cf_err_$port.txt" -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
             if ($url) {
-              echo "URL_$port=$url" >> $env:GITHUB_ENV
-              echo "Port $port: $url"
+              $envVar = "URL_$port"
+              echo "$envVar=$url" >> $env:GITHUB_ENV
+              Write-Host "Port $($port): $($url)"
             }
           }
 
@@ -92,10 +93,10 @@ jobs:
           CF_TOKEN: ${{ secrets.CF_TOKEN_VMESS }}
         run: |
           $ACC1 = "e96a2dd0c1de68077e282bab0f5e64af"
-          
+
           $WORKER1_URL = $env:URL_8086
           $WORKER2_URL = $env:URL_8087
-          
+
           $CODE1 = @"
           addEventListener('fetch', event => { event.respondWith(handleRequest(event.request)); });
           async function handleRequest(request) {
@@ -106,8 +107,8 @@ jobs:
             return fetch(new Request(url, request));
           }
           "@
-          
-          $CODE2 = @"
+              
+              $CODE2 = @"
           addEventListener('fetch', event => { event.respondWith(handleRequest(event.request)); });
           async function handleRequest(request) {
             const url = new URL(request.url);
@@ -117,10 +118,10 @@ jobs:
             return fetch(new Request(url, request));
           }
           "@
-          
-          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw $CODE1
-          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker-2" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw $CODE2
-          echo "Workers updated"
+              
+              curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw "$CODE1"
+              curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker-2" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw "$CODE2"
+              echo "Workers updated"
 
       - name: 8. Install Tailscale
         env:
@@ -141,7 +142,7 @@ jobs:
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $SERVER_ID = "server1"
           $SECRET = "fasjfajf09wjf9jawfj0j"
-          
+
           $TROJAN1_DOMAIN = $env:URL_8080 -replace 'https://', ''
           $TROJAN2_DOMAIN = $env:URL_8081 -replace 'https://', ''
           $TROJAN3_DOMAIN = $env:URL_8082 -replace 'https://', ''
@@ -151,44 +152,44 @@ jobs:
           $WORKER1_DOMAIN = "my-vpn-worker.hosseinderees7.workers.dev"
           $WORKER2_DOMAIN = "my-vpn-worker-2.hosseinderees7.workers.dev"
           $TAILSCALE_IP = $env:TAILSCALE_IP
-          
+
           $links = @()
-          
+
           # Trojan 1
           $links += "trojan://${PASSWORD}@${TROJAN1_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_443"
-          
+
           # Trojan 2
           $links += "trojan://${PASSWORD}@${TROJAN2_DOMAIN}:2053?path=%2Ftrojan&security=tls&type=ws#Trojan_2053"
-          
+
           # Trojan 3
           $links += "trojan://${PASSWORD}@${TROJAN3_DOMAIN}:2083?path=%2Ftrojan&security=tls&type=ws#Trojan_2083"
-          
+
           # VLESS 1
           $links += "vless://${UUID}@${VLESS1_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_443"
-          
+
           # VLESS 2
           $links += "vless://${UUID}@${VLESS2_DOMAIN}:2096?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_2096"
-          
+
           # VLESS 3
           $links += "vless://${UUID}@${VLESS3_DOMAIN}:8443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_8443"
-          
+
           # Worker VMess
           $VMESS_JSON = '{"v":"2","ps":"همراه_اول","add":"' + $WORKER1_DOMAIN + '","port":443,"id":"' + $UUID + '","aid":0,"scy":"none","net":"ws","type":"none","path":"/","tls":"tls"}'
           $VMESS_LINK = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($VMESS_JSON))
           $links += $VMESS_LINK
-          
+
           # Worker Trojan
           $links += "trojan://${PASSWORD}@${WORKER2_DOMAIN}:443?path=/&security=tls&type=ws#همراه_اول"
-          
+
           # Reality with Tailscale IP
           $links += "vless://${UUID}@${TAILSCALE_IP}:443?security=reality&encryption=none&pbk=$env:PUBLIC_KEY&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Tailscale"
-          
+
           foreach ($link in $links) {
             $body = @{ server_id = $SERVER_ID; vmess = $link } | ConvertTo-Json
             curl -s -X POST "https://miradig.ir/update" -H "Authorization: Bearer $SECRET" -H "Content-Type: application/json" -d $body
             echo "Sent: $link"
           }
-          
+
           echo "ALL LINKS SENT!"
 
       - name: 10. Keep Alive
