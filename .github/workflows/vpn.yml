@@ -35,7 +35,7 @@ jobs:
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
           Start-Sleep -Seconds 8
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          
+
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
@@ -44,7 +44,7 @@ jobs:
           Write-Host "  Password     : Cynet@2026" -ForegroundColor Yellow
           Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
           Write-Host "==================================================" -ForegroundColor Green
-          
+
           echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
 
       # ==========================================
@@ -65,7 +65,7 @@ jobs:
           $keys = .\xray.exe x25519
           $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
           $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
-          
+
           echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
           echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
           Write-Host "✅ Keys generated"
@@ -75,37 +75,37 @@ jobs:
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $PRIVATE_KEY = $env:PRIVATE_KEY
           $TAILSCALE_IP = $env:TAILSCALE_IP
-          
+
           $config = @"
-      {
-        "log": { "loglevel": "warning" },
-        "inbounds": [
           {
-            "listen": "0.0.0.0",
-            "port": 8443,
-            "protocol": "vless",
-            "settings": {
-              "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
-              "decryption": "none"
-            },
-            "streamSettings": {
-              "network": "tcp",
-              "security": "reality",
-              "realitySettings": {
-                "dest": "www.google.com:443",
-                "serverNames": ["www.google.com"],
-                "privateKey": "$PRIVATE_KEY",
-                "shortIds": ["6ba85179e30d4fc2"]
+            "log": { "loglevel": "warning" },
+            "inbounds": [
+              {
+                "listen": "0.0.0.0",
+                "port": 8443,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                  "decryption": "none"
+                },
+                "streamSettings": {
+                  "network": "tcp",
+                  "security": "reality",
+                  "realitySettings": {
+                    "dest": "www.google.com:443",
+                    "serverNames": ["www.google.com"],
+                    "privateKey": "$PRIVATE_KEY",
+                    "shortIds": ["6ba85179e30d4fc2"]
+                  }
+                }
               }
-            }
+            ],
+            "outbounds": [{"protocol": "freedom"}]
           }
-        ],
-        "outbounds": [{"protocol": "freedom"}]
-      }
-      "@
-          
-          [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
-          Write-Host "✅ Reality config created"
+          "@
+              
+              [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
+              Write-Host "✅ Reality config created"
 
       - name: 7. Start Reality Server
         run: |
@@ -119,7 +119,7 @@ jobs:
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $PUBLIC_KEY = $env:PUBLIC_KEY
           $TAILSCALE_IP = $env:TAILSCALE_IP
-          
+
           Write-Host ""
           Write-Host "==================================================" -ForegroundColor Green
           Write-Host "  >>> REALITY LINK (via Tailscale) <<<" -ForegroundColor Cyan
