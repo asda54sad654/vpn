@@ -1,4 +1,4 @@
-name: VPN - Full Suite (RDP + Xray + Cloudflared + Tailscale + Reality)
+name: Windows Cloud RDP + Reality
 
 on:
   workflow_dispatch:
@@ -9,155 +9,128 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: 1. Install Xray and Cloudflared
+      # ==========================================
+      # بخش ۱: RDP و Tailscale (دقیقاً مثل کد خودت)
+      # ==========================================
+      - name: 1. Enable Remote Desktop & Firewall
         run: |
-          mkdir C:\xray -Force
-          cd C:\xray
-          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
-          Expand-Archive xray.zip -DestinationPath . -Force
-          Remove-Item xray.zip -Force
-          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-          echo "✅ Installed"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
 
-      - name: 2. Generate Reality Keys
+      - name: 2. Create Admin Account
         run: |
-          cd C:\xray
-          $keys = .\xray.exe x25519
-          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
-          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
+          $Password = ConvertTo-SecureString "Cynet@2026" -AsPlainText -Force
+          New-LocalUser -Name "CynetAdmin" -Password $Password -PasswordNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "CynetAdmin" -ErrorAction SilentlyContinue
+          net user runneradmin Cynet@2026
 
-          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
-          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
-          Write-Host "✅ Keys generated"
-
-      - name: 3. Create Xray Config
-        run: |
-          cd C:\xray
-          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PRIVATE_KEY = $env:PRIVATE_KEY
-
-          $config = @"
-          {
-            "log": { "loglevel": "warning" },
-            "inbounds": [
-              {"listen": "0.0.0.0", "port": 8080, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
-              {"listen": "0.0.0.0", "port": 8081, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
-              {"listen": "0.0.0.0", "port": 8082, "protocol": "vmess", "settings": {"clients": [{"id": "$UUID", "alterId": 0}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}},
-              {"listen": "0.0.0.0", "port": 8083, "protocol": "vless", "settings": {"clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"dest": "www.google.com:443", "serverNames": ["www.google.com"], "privateKey": "$PRIVATE_KEY", "shortIds": ["6ba85179e30d4fc2"]}}}
-            ],
-            "outbounds": [{"protocol": "freedom"}]
-          }
-          "@
-              
-              [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
-              Write-Host "✅ Config created"
-
-      - name: 4. Start Xray
-        run: |
-          cd C:\xray
-          Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-          Write-Host "✅ Xray started"
-
-      - name: 5. Start Cloudflared Tunnels
-        run: |
-          cd C:\xray
-          $ports = @(8080, 8081, 8082)
-          foreach ($port in $ports) {
-            Start-Process -FilePath "cmd" -ArgumentList "/c", "C:\xray\cloudflared.exe tunnel --url http://127.0.0.1:$port --protocol http2 > C:\xray\cf_$port.txt 2> C:\xray\cf_err_$port.txt" -WindowStyle Hidden
-            Start-Sleep -Seconds 5
-          }
-          Start-Sleep -Seconds 20
-          Write-Host "✅ Tunnels started"
-
-      - name: 6. Get URLs
-        run: |
-          cd C:\xray
-          $ports = @(8080, 8081, 8082)
-
-          foreach ($port in $ports) {
-            $url = Select-String -Path "C:\xray\cf_err_$port.txt" -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
-            if ($url) {
-              $envVar = "URL_$port"
-              echo "$envVar=$url" >> $env:GITHUB_ENV
-              Write-Host "Port $($port): $($url)"
-            }
-          }
-
-      - name: 7. Install Tailscale
+      - name: 3. Install & Connect Tailscale VPN
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
           Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
           Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-vpn-server"
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
           Start-Sleep -Seconds 8
           $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          
+          Write-Host ""
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
+          Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
+          Write-Host "  Username     : CynetAdmin" -ForegroundColor Yellow
+          Write-Host "  Password     : Cynet@2026" -ForegroundColor Yellow
+          Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
+          Write-Host "==================================================" -ForegroundColor Green
+          
           echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
-          Write-Host "✅ Tailscale IP: $ts_ip"
 
-      - name: 8. Setup RDP
+      # ==========================================
+      # بخش ۲: نصب Xray و Reality
+      # ==========================================
+      - name: 4. Install Xray
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          New-Item -Path "HKLM:\Software\Policies\Microsoft\Windows NT\Rdp" -Force
-          New-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows NT\Rdp" -Name "fServerDisableClipboardRedirect" -Value 0 -PropertyType DWord -Force
+          mkdir C:\xray -Force
+          cd C:\xray
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
+          Expand-Archive xray.zip -DestinationPath . -Force
+          Remove-Item xray.zip -Force
+          Write-Host "✅ Xray installed"
 
-          net user runneradmin Password123! /add
-          net localgroup Administrators runneradmin /add
-          net localgroup "Remote Desktop Users" runneradmin /add
-
-          Start-Service -Name "TermService"
-          Set-Service -Name "TermService" -StartupType Automatic
-
-          New-NetFirewallRule -DisplayName "Allow RDP" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow
-          Write-Host "✅ RDP enabled"
-
-      - name: 9. Generate Links
+      - name: 5. Generate Reality Keys
         run: |
-          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          cd C:\xray
+          $keys = .\xray.exe x25519
+          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
+          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
+          
+          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
+          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
+          Write-Host "✅ Keys generated"
+
+      - name: 6. Create Reality Config
+        run: |
+          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          $PRIVATE_KEY = $env:PRIVATE_KEY
+          $TAILSCALE_IP = $env:TAILSCALE_IP
+          
+          $config = @"
+      {
+        "log": { "loglevel": "warning" },
+        "inbounds": [
+          {
+            "listen": "0.0.0.0",
+            "port": 8443,
+            "protocol": "vless",
+            "settings": {
+              "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+              "decryption": "none"
+            },
+            "streamSettings": {
+              "network": "tcp",
+              "security": "reality",
+              "realitySettings": {
+                "dest": "www.google.com:443",
+                "serverNames": ["www.google.com"],
+                "privateKey": "$PRIVATE_KEY",
+                "shortIds": ["6ba85179e30d4fc2"]
+              }
+            }
+          }
+        ],
+        "outbounds": [{"protocol": "freedom"}]
+      }
+      "@
+          
+          [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
+          Write-Host "✅ Reality config created"
+
+      - name: 7. Start Reality Server
+        run: |
+          cd C:\xray
+          Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          Write-Host "✅ Reality server started on port 8443"
+
+      - name: 8. Show Reality Link
+        run: |
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $PUBLIC_KEY = $env:PUBLIC_KEY
           $TAILSCALE_IP = $env:TAILSCALE_IP
-
-          $TROJAN_DOMAIN = $env:URL_8080 -replace 'https://', ''
-          $VLESS_DOMAIN = $env:URL_8081 -replace 'https://', ''
-          $VMESS_DOMAIN = $env:URL_8082 -replace 'https://', ''
-
-          Write-Host "========================================"
-          Write-Host "🔹 Trojan:"
-          Write-Host "trojan://${PASSWORD}@${TROJAN_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_CF"
+          
           Write-Host ""
-          Write-Host "🔹 VLESS:"
-          Write-Host "vless://${UUID}@${VLESS_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_CF"
+          Write-Host "==================================================" -ForegroundColor Green
+          Write-Host "  >>> REALITY LINK (via Tailscale) <<<" -ForegroundColor Cyan
           Write-Host ""
-          Write-Host "🔹 VMess:"
-          $VMESS_JSON = '{"v":"2","ps":"VMess_CF","add":"' + $VMESS_DOMAIN + '","port":443,"id":"' + $UUID + '","aid":0,"scy":"zero","net":"ws","type":"none","path":"/vmess","tls":"tls"}'
-          $VMESS_LINK = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($VMESS_JSON))
-          Write-Host "$VMESS_LINK"
+          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Server" -ForegroundColor Yellow
           Write-Host ""
-          Write-Host "🔹 Reality (Tailscale):"
-          Write-Host "vless://${UUID}@${TAILSCALE_IP}:443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Tailscale"
-          Write-Host "========================================"
+          Write-Host "  Port: 8443" -ForegroundColor Yellow
+          Write-Host "  UUID: $UUID" -ForegroundColor Yellow
+          Write-Host "==================================================" -ForegroundColor Green
 
-      - name: 10. RDP Info
-        run: |
-          $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content
-          Write-Host "========================================"
-          Write-Host "🖥️  RDP Connection Info:"
-          Write-Host "========================================"
-          Write-Host "IP: $ip"
-          Write-Host "User: runneradmin"
-          Write-Host "Password: Password123!"
-          Write-Host "Port: 3389"
-          Write-Host ""
-          Write-Host "Run this command:"
-          Write-Host "mstsc /v:$ip"
-          Write-Host "========================================"
-
-      - name: 11. Keep Alive
+      - name: 9. Keep Alive (6 Hours)
         run: |
           for ($i = 1; $i -le 360; $i++) {
             Start-Sleep -Seconds 60
@@ -165,5 +138,5 @@ jobs:
             if (-not $xray) {
               Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config C:\xray\config.json" -WindowStyle Hidden
             }
-            Write-Host "[$i/360] Alive"
+            Write-Host "[$i/360] Server running..."
           }
