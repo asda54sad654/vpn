@@ -1,142 +1,96 @@
-name: Windows Cloud RDP + Reality
+name: VLESS VPN with Subdomain
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      # ==========================================
-      # بخش ۱: RDP و Tailscale (دقیقاً مثل کد خودت)
-      # ==========================================
-      - name: 1. Enable Remote Desktop & Firewall
+      - name: Install Xray
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+          mkdir -p xray
+          cd xray
+          wget -qO xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+          unzip -q xray.zip
+          rm xray.zip
+          chmod +x xray
+          echo "✅ Xray installed"
 
-      - name: 2. Create Admin Account
+      - name: Create Xray Config (VLESS + WebSocket + TLS)
         run: |
-          $Password = ConvertTo-SecureString "Cynet@2026" -AsPlainText -Force
-          New-LocalUser -Name "CynetAdmin" -Password $Password -PasswordNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "CynetAdmin" -ErrorAction SilentlyContinue
-          net user runneradmin Cynet@2026
-
-      - name: 3. Install & Connect Tailscale VPN
-        env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-        run: |
-          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
-          Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
-          Start-Sleep -Seconds 5
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-rdp-server"
-          Start-Sleep -Seconds 8
-          $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-
-          Write-Host ""
-          Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> RDP SERVER IS READY! <<<" -ForegroundColor Cyan
-          Write-Host "  Tailscale IP : $ts_ip" -ForegroundColor Yellow
-          Write-Host "  Username     : CynetAdmin" -ForegroundColor Yellow
-          Write-Host "  Password     : Cynet@2026" -ForegroundColor Yellow
-          Write-Host "  >> Open mstsc and connect to: $ts_ip" -ForegroundColor Magenta
-          Write-Host "==================================================" -ForegroundColor Green
-
-          echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # بخش ۲: نصب Xray و Reality
-      # ==========================================
-      - name: 4. Install Xray
-        run: |
-          mkdir C:\xray -Force
-          cd C:\xray
-          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
-          Expand-Archive xray.zip -DestinationPath . -Force
-          Remove-Item xray.zip -Force
-          Write-Host "✅ Xray installed"
-
-      - name: 5. Generate Reality Keys
-        run: |
-          cd C:\xray
-          $keys = .\xray.exe x25519
-          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
-          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
-
-          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
-          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
-          Write-Host "✅ Keys generated"
-
-      - name: 6. Create Reality Config
-        run: |
-          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PRIVATE_KEY = $env:PRIVATE_KEY
-          $TAILSCALE_IP = $env:TAILSCALE_IP
-
-          $config = @"
+          cd xray
+          UUID="5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          
+          cat <<EOF > config.json
           {
             "log": { "loglevel": "warning" },
             "inbounds": [
               {
                 "listen": "0.0.0.0",
-                "port": 8443,
+                "port": 8080,
                 "protocol": "vless",
                 "settings": {
-                  "clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}],
+                  "clients": [{"id": "${UUID}"}],
                   "decryption": "none"
                 },
                 "streamSettings": {
-                  "network": "tcp",
-                  "security": "reality",
-                  "realitySettings": {
-                    "dest": "www.google.com:443",
-                    "serverNames": ["www.google.com"],
-                    "privateKey": "$PRIVATE_KEY",
-                    "shortIds": ["6ba85179e30d4fc2"]
-                  }
+                  "network": "ws",
+                  "wsSettings": {"path": "/"}
                 }
               }
             ],
             "outbounds": [{"protocol": "freedom"}]
           }
-          "@
+          EOF
+          echo "✅ Config created"
 
-          [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
-          Write-Host "✅ Reality config created"
-
-      - name: 7. Start Reality Server
+      - name: Start Xray
         run: |
-          cd C:\xray
-          Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-          Write-Host "✅ Reality server started on port 8443"
+          cd xray
+          ./xray run -config config.json &
+          sleep 5
+          if pgrep -f "xray run" > /dev/null; then
+            echo "✅ Xray started on port 8080"
+          else
+            echo "❌ Xray failed"
+            exit 1
+          fi
 
-      - name: 8. Show Reality Link
+      - name: Show VLESS Link
         run: |
-          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          $PUBLIC_KEY = $env:PUBLIC_KEY
-          $TAILSCALE_IP = $env:TAILSCALE_IP
+          UUID="5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          DOMAIN="udududu.miradig.ir"
+          
+          VLESS_LINK="vless://${UUID}@${DOMAIN}:443?path=%2F&security=tls&encryption=none&type=ws&sni=${DOMAIN}#VLESS_WS"
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ VLESS + WebSocket + TLS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "🔹 لینک VLESS:"
+          echo "$VLESS_LINK"
+          echo ""
+          echo "🔹 تنظیمات دستی:"
+          echo "   پروتکل: VLESS"
+          echo "   آدرس: $DOMAIN"
+          echo "   پورت: 443"
+          echo "   UUID: $UUID"
+          echo "   Network: ws"
+          echo "   Path: /"
+          echo "   TLS: فعال"
+          echo "   SNI: $DOMAIN"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-          Write-Host ""
-          Write-Host "==================================================" -ForegroundColor Green
-          Write-Host "  >>> REALITY LINK (via Tailscale) <<<" -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "vless://${UUID}@${TAILSCALE_IP}:8443?security=reality&encryption=none&pbk=${PUBLIC_KEY}&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Server" -ForegroundColor Yellow
-          Write-Host ""
-          Write-Host "  Port: 8443" -ForegroundColor Yellow
-          Write-Host "  UUID: $UUID" -ForegroundColor Yellow
-          Write-Host "==================================================" -ForegroundColor Green
-
-      - name: 9. Keep Alive (6 Hours)
+      - name: Keep Alive
         run: |
-          for ($i = 1; $i -le 360; $i++) {
-            Start-Sleep -Seconds 60
-            $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
-            if (-not $xray) {
-              Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config C:\xray\config.json" -WindowStyle Hidden
-            }
-            Write-Host "[$i/360] Server running..."
-          }
+          cd xray
+          for i in {1..360}; do
+            sleep 60
+            if ! pgrep -f "xray run" > /dev/null; then
+              ./xray run -config config.json &
+            fi
+            echo "[$i/360] Alive"
+          done
