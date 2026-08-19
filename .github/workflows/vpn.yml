@@ -25,7 +25,7 @@ jobs:
           $keys = .\xray.exe x25519
           $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' }).Trim()
           $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' }).Trim()
-          
+
           echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
           echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
           Write-Host "✅ Keys generated"
@@ -36,22 +36,22 @@ jobs:
           $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $PRIVATE_KEY = $env:PRIVATE_KEY
-          
+
           $config = @"
-      {
-        "log": { "loglevel": "warning" },
-        "inbounds": [
-          {"listen": "0.0.0.0", "port": 8080, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
-          {"listen": "0.0.0.0", "port": 8081, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
-          {"listen": "0.0.0.0", "port": 8082, "protocol": "vmess", "settings": {"clients": [{"id": "$UUID", "alterId": 0}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}},
-          {"listen": "0.0.0.0", "port": 8083, "protocol": "vless", "settings": {"clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"dest": "www.google.com:443", "serverNames": ["www.google.com"], "privateKey": "$PRIVATE_KEY", "shortIds": ["6ba85179e30d4fc2"]}}}
-        ],
-        "outbounds": [{"protocol": "freedom"}]
-      }
-      "@
-          
-          [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
-          Write-Host "✅ Config created"
+          {
+            "log": { "loglevel": "warning" },
+            "inbounds": [
+              {"listen": "0.0.0.0", "port": 8080, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
+              {"listen": "0.0.0.0", "port": 8081, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
+              {"listen": "0.0.0.0", "port": 8082, "protocol": "vmess", "settings": {"clients": [{"id": "$UUID", "alterId": 0}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}},
+              {"listen": "0.0.0.0", "port": 8083, "protocol": "vless", "settings": {"clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"dest": "www.google.com:443", "serverNames": ["www.google.com"], "privateKey": "$PRIVATE_KEY", "shortIds": ["6ba85179e30d4fc2"]}}}
+            ],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          "@
+              
+              [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
+              Write-Host "✅ Config created"
 
       - name: 4. Start Xray
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: |
           cd C:\xray
           $ports = @(8080, 8081, 8082)
-          
+
           foreach ($port in $ports) {
             $url = Select-String -Path "C:\xray\cf_err_$port.txt" -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
             if ($url) {
@@ -104,14 +104,14 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           New-Item -Path "HKLM:\Software\Policies\Microsoft\Windows NT\Rdp" -Force
           New-ItemProperty -Path "HKLM:\Software\Policies\Microsoft\Windows NT\Rdp" -Name "fServerDisableClipboardRedirect" -Value 0 -PropertyType DWord -Force
-          
+
           net user runneradmin Password123! /add
           net localgroup Administrators runneradmin /add
           net localgroup "Remote Desktop Users" runneradmin /add
-          
+
           Start-Service -Name "TermService"
           Set-Service -Name "TermService" -StartupType Automatic
-          
+
           New-NetFirewallRule -DisplayName "Allow RDP" -Direction Inbound -LocalPort 3389 -Protocol TCP -Action Allow
           Write-Host "✅ RDP enabled"
 
@@ -121,11 +121,11 @@ jobs:
           $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
           $PUBLIC_KEY = $env:PUBLIC_KEY
           $TAILSCALE_IP = $env:TAILSCALE_IP
-          
+
           $TROJAN_DOMAIN = $env:URL_8080 -replace 'https://', ''
           $VLESS_DOMAIN = $env:URL_8081 -replace 'https://', ''
           $VMESS_DOMAIN = $env:URL_8082 -replace 'https://', ''
-          
+
           Write-Host "========================================"
           Write-Host "🔹 Trojan:"
           Write-Host "trojan://${PASSWORD}@${TROJAN_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_CF"
