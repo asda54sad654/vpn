@@ -1,59 +1,203 @@
-name: SS Test
+name: VPN - Trojan + VLESS + Workers + Reality + Tailscale
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Install
+      - name: 1. Install Xray and Cloudflared
         run: |
-          mkdir -p ss
-          cd ss
-          wget -qO ss.tar.xz "https://github.com/shadowsocks/shadowsocks-rust/releases/latest/download/shadowsocks-v1.21.0.x86_64-unknown-linux-gnu.tar.xz"
-          tar -xJf ss.tar.xz
-          chmod +x ss-server
-          wget -qO cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-          chmod +x cloudflared
-          echo "✅ Done"
+          mkdir C:\xray -Force
+          cd C:\xray
+          Invoke-WebRequest "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
+          Expand-Archive xray.zip -DestinationPath . -Force
+          Remove-Item xray.zip -Force
+          Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          echo "Installed"
 
-      - name: Config
+      - name: 2. Generate Keys
         run: |
-          cd ss
-          cat > config.json << 'EOF'
+          cd C:\xray
+          $keys = .\xray.exe x25519
+          $PRIVATE_KEY = ($keys | Select-String "PrivateKey" | ForEach-Object { $_ -replace 'PrivateKey: ', '' })
+          $PUBLIC_KEY = ($keys | Select-String "PublicKey" | ForEach-Object { $_ -replace 'Password \(PublicKey\): ', '' })
+          
+          echo "PRIVATE_KEY=$PRIVATE_KEY" >> $env:GITHUB_ENV
+          echo "PUBLIC_KEY=$PUBLIC_KEY" >> $env:GITHUB_ENV
+
+      - name: 3. Create Xray Config
+        run: |
+          cd C:\xray
+          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          
+          $config = @"
           {
-            "server": "0.0.0.0",
-            "server_port": 8388,
-            "password": "5aa2ebe1-5114-4bc3-aefa-935807433e70",
-            "method": "aes-256-gcm",
-            "fast_open": false,
-            "mode": "tcp_only"
+            "log": { "loglevel": "warning" },
+            "inbounds": [
+              {"listen": "0.0.0.0", "port": 8080, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
+              {"listen": "0.0.0.0", "port": 8081, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
+              {"listen": "0.0.0.0", "port": 8082, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}},
+              {"listen": "0.0.0.0", "port": 8083, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
+              {"listen": "0.0.0.0", "port": 8084, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
+              {"listen": "0.0.0.0", "port": 8085, "protocol": "vless", "settings": {"clients": [{"id": "$UUID"}], "decryption": "none"}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}},
+              {"listen": "0.0.0.0", "port": 8086, "protocol": "vmess", "settings": {"clients": [{"id": "$UUID", "alterId": 0}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}},
+              {"listen": "0.0.0.0", "port": 8087, "protocol": "trojan", "settings": {"clients": [{"password": "$PASSWORD"}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/"}}},
+              {"listen": "0.0.0.0", "port": 8088, "protocol": "vless", "settings": {"clients": [{"id": "$UUID", "flow": "xtls-rprx-vision"}], "decryption": "none"}, "streamSettings": {"network": "tcp", "security": "reality", "realitySettings": {"dest": "www.google.com:443", "serverNames": ["www.google.com"], "privateKey": "$env:PRIVATE_KEY", "shortIds": ["6ba85179e30d4fc2"]}}}
+            ],
+            "outbounds": [{"protocol": "freedom"}]
           }
-          EOF
+          "@
+          
+          [System.IO.File]::WriteAllText("C:\xray\config.json", $config)
+          echo "Config created"
 
-      - name: Run SS
+      - name: 4. Start Xray
         run: |
-          cd ss
-          ./ss-server -c config.json &
-          sleep 3
-          pgrep ss-server || exit 1
+          cd C:\xray
+          Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config config.json" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          echo "Xray started"
 
-      - name: Run CF
+      - name: 5. Start Cloudflared Tunnels
         run: |
-          cd ss
-          ./cloudflared tunnel --url http://localhost:8388 --protocol http2 &
-          sleep 15
+          cd C:\xray
+          $ports = @(8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
+          foreach ($port in $ports) {
+            Start-Process -FilePath "cmd" -ArgumentList "/c", "C:\xray\cloudflared.exe tunnel --url http://127.0.0.1:$port > C:\xray\cf_$port.txt 2> C:\xray\cf_err_$port.txt" -WindowStyle Hidden
+            Start-Sleep -Seconds 3
+          }
+          Start-Sleep -Seconds 20
+          echo "All tunnels started"
 
-      - name: Get Link
+      - name: 6. Get URLs
         run: |
-          cd ss
-          URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' | head -1)
-          if [ -z "$URL" ]; then
-            echo "No URL found"
-            exit 1
-          fi
-          DOMAIN=$(echo $URL | sed 's|https://||')
-          echo "ss://$(echo -n "aes-256-gcm:5aa2ebe1-5114-4bc3-aefa-935807433e70@${DOMAIN}:443" | base64 -w 0)"
+          cd C:\xray
+          $ports = @(8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087)
+          
+          foreach ($port in $ports) {
+            $url = Select-String -Path "C:\xray\cf_err_$port.txt" -Pattern 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | ForEach-Object { $_.Matches.Value } | Select-Object -First 1
+            if ($url) {
+              echo "URL_$port=$url" >> $env:GITHUB_ENV
+              echo "Port $port: $url"
+            }
+          }
+
+      - name: 7. Update Workers
+        env:
+          CF_TOKEN: ${{ secrets.CF_TOKEN_VMESS }}
+        run: |
+          $ACC1 = "e96a2dd0c1de68077e282bab0f5e64af"
+          
+          $WORKER1_URL = $env:URL_8086
+          $WORKER2_URL = $env:URL_8087
+          
+          $CODE1 = @"
+          addEventListener('fetch', event => { event.respondWith(handleRequest(event.request)); });
+          async function handleRequest(request) {
+            const url = new URL(request.url);
+            const target = new URL('$WORKER1_URL');
+            url.hostname = target.hostname;
+            url.protocol = target.protocol;
+            return fetch(new Request(url, request));
+          }
+          "@
+          
+          $CODE2 = @"
+          addEventListener('fetch', event => { event.respondWith(handleRequest(event.request)); });
+          async function handleRequest(request) {
+            const url = new URL(request.url);
+            const target = new URL('$WORKER2_URL');
+            url.hostname = target.hostname;
+            url.protocol = target.protocol;
+            return fetch(new Request(url, request));
+          }
+          "@
+          
+          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw $CODE1
+          curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACC1/workers/scripts/my-vpn-worker-2" -H "Authorization: Bearer $env:CF_TOKEN" -H "Content-Type: application/javascript" --data-raw $CODE2
+          echo "Workers updated"
+
+      - name: 8. Install Tailscale
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Invoke-WebRequest "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "C:\tailscale.msi"
+          Start-Process msiexec -ArgumentList "/i C:\tailscale.msi /quiet /norestart" -Wait
+          Start-Sleep -Seconds 5
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey="$Env:TAILSCALE_AUTHKEY" --hostname="github-vpn-server"
+          Start-Sleep -Seconds 8
+          $ts_ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          echo "TAILSCALE_IP=$ts_ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $ts_ip"
+
+      - name: 9. Generate and Send All Links
+        run: |
+          $PASSWORD = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          $UUID = "5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          $SERVER_ID = "server1"
+          $SECRET = "fasjfajf09wjf9jawfj0j"
+          
+          $TROJAN1_DOMAIN = $env:URL_8080 -replace 'https://', ''
+          $TROJAN2_DOMAIN = $env:URL_8081 -replace 'https://', ''
+          $TROJAN3_DOMAIN = $env:URL_8082 -replace 'https://', ''
+          $VLESS1_DOMAIN = $env:URL_8083 -replace 'https://', ''
+          $VLESS2_DOMAIN = $env:URL_8084 -replace 'https://', ''
+          $VLESS3_DOMAIN = $env:URL_8085 -replace 'https://', ''
+          $WORKER1_DOMAIN = "my-vpn-worker.hosseinderees7.workers.dev"
+          $WORKER2_DOMAIN = "my-vpn-worker-2.hosseinderees7.workers.dev"
+          $TAILSCALE_IP = $env:TAILSCALE_IP
+          
+          $links = @()
+          
+          # Trojan 1
+          $links += "trojan://${PASSWORD}@${TROJAN1_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_443"
+          
+          # Trojan 2
+          $links += "trojan://${PASSWORD}@${TROJAN2_DOMAIN}:2053?path=%2Ftrojan&security=tls&type=ws#Trojan_2053"
+          
+          # Trojan 3
+          $links += "trojan://${PASSWORD}@${TROJAN3_DOMAIN}:2083?path=%2Ftrojan&security=tls&type=ws#Trojan_2083"
+          
+          # VLESS 1
+          $links += "vless://${UUID}@${VLESS1_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_443"
+          
+          # VLESS 2
+          $links += "vless://${UUID}@${VLESS2_DOMAIN}:2096?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_2096"
+          
+          # VLESS 3
+          $links += "vless://${UUID}@${VLESS3_DOMAIN}:8443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_8443"
+          
+          # Worker VMess
+          $VMESS_JSON = '{"v":"2","ps":"همراه_اول","add":"' + $WORKER1_DOMAIN + '","port":443,"id":"' + $UUID + '","aid":0,"scy":"none","net":"ws","type":"none","path":"/","tls":"tls"}'
+          $VMESS_LINK = "vmess://" + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($VMESS_JSON))
+          $links += $VMESS_LINK
+          
+          # Worker Trojan
+          $links += "trojan://${PASSWORD}@${WORKER2_DOMAIN}:443?path=/&security=tls&type=ws#همراه_اول"
+          
+          # Reality with Tailscale IP
+          $links += "vless://${UUID}@${TAILSCALE_IP}:443?security=reality&encryption=none&pbk=$env:PUBLIC_KEY&headerType=none&fp=chrome&type=tcp&flow=xtls-rprx-vision&sni=www.google.com&sid=6ba85179e30d4fc2#Reality_Tailscale"
+          
+          foreach ($link in $links) {
+            $body = @{ server_id = $SERVER_ID; vmess = $link } | ConvertTo-Json
+            curl -s -X POST "https://miradig.ir/update" -H "Authorization: Bearer $SECRET" -H "Content-Type: application/json" -d $body
+            echo "Sent: $link"
+          }
+          
+          echo "ALL LINKS SENT!"
+
+      - name: 10. Keep Alive
+        run: |
+          for ($i = 1; $i -le 360; $i++) {
+            Start-Sleep -Seconds 60
+            $xray = Get-Process -Name "xray" -ErrorAction SilentlyContinue
+            if (-not $xray) {
+              Start-Process -FilePath "C:\xray\xray.exe" -ArgumentList "run -config C:\xray\config.json" -WindowStyle Hidden
+            }
+            echo "[$i/360] Alive"
+          }
