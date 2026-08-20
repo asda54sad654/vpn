@@ -68,7 +68,7 @@ jobs:
           cd xray
           nohup ./cloudflared tunnel --url http://127.0.0.1:8080 \
             > cf_trojan.log 2> cf_trojan_err.log &
-          sleep 15
+          sleep 5
           echo "✅ Trojan tunnel started"
 
       - name: 5. Start Cloudflared Tunnel for VLESS
@@ -76,7 +76,7 @@ jobs:
           cd xray
           nohup ./cloudflared tunnel --url http://127.0.0.1:8081 \
             > cf_vless.log 2> cf_vless_err.log &
-          sleep 15
+          sleep 5
           echo "✅ VLESS tunnel started"
 
       - name: 6. Get Tunnel URLs
@@ -100,7 +100,7 @@ jobs:
 
       - name: 7. Update Cloudflare Worker with Custom Domain
         env:
-          CF_TOKEN_TROJAN: ${{ secrets.CF_TOKEN_TROJAN }}
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
         run: |
           cd xray
           ACC_ID="e96a2dd0c1de68077e282bab0f5e64af"
@@ -136,7 +136,7 @@ jobs:
           )
 
           RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${ACC_ID}/workers/scripts/${WORKER_NAME}" \
-            -H "Authorization: Bearer ${CF_TOKEN_TROJAN}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
             -H "Content-Type: application/javascript" \
             --data-raw "$WORKER_CODE")
 
