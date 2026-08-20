@@ -1,4 +1,4 @@
-name: VLESS VPN with Subdomain
+name: VPN - Tunnel + Worker Custom Domain (asdoijaosd.taban-learn.ir)
 
 on:
   workflow_dispatch:
@@ -9,37 +9,40 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install Xray
+      - name: 1. Install Xray and Cloudflared
         run: |
           mkdir -p xray
           cd xray
           wget -qO xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
           unzip -q xray.zip
           rm xray.zip
-          chmod +x xray
-          echo "✅ Xray installed"
+          wget -qO cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          chmod +x xray cloudflared
+          echo "✅ Installed"
 
-      - name: Create Xray Config (VLESS + WebSocket + TLS)
+      - name: 2. Create Xray Config (Trojan + VLESS)
         run: |
           cd xray
           UUID="5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          
-          cat <<EOF > config.json
+          PASSWORD="5aa2ebe1-5114-4bc3-aefa-935807433e70"
+
+          cat > config.json <<EOF
           {
-            "log": { "loglevel": "warning" },
+            "log": {"loglevel": "warning"},
             "inbounds": [
               {
                 "listen": "0.0.0.0",
                 "port": 8080,
+                "protocol": "trojan",
+                "settings": {"clients": [{"password": "${PASSWORD}"}]},
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/trojan"}}
+              },
+              {
+                "listen": "0.0.0.0",
+                "port": 8081,
                 "protocol": "vless",
-                "settings": {
-                  "clients": [{"id": "${UUID}"}],
-                  "decryption": "none"
-                },
-                "streamSettings": {
-                  "network": "ws",
-                  "wsSettings": {"path": "/"}
-                }
+                "settings": {"clients": [{"id": "${UUID}"}], "decryption": "none"},
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}
               }
             ],
             "outbounds": [{"protocol": "freedom"}]
@@ -47,50 +50,159 @@ jobs:
           EOF
           echo "✅ Config created"
 
-      - name: Start Xray
+      - name: 3. Start Xray
         run: |
           cd xray
-          ./xray run -config config.json &
+          nohup ./xray run -config config.json > xray.log 2>&1 &
           sleep 5
           if pgrep -f "xray run" > /dev/null; then
-            echo "✅ Xray started on port 8080"
+            echo "✅ Xray started"
           else
             echo "❌ Xray failed"
+            cat xray.log
             exit 1
           fi
 
-      - name: Show VLESS Link
+      - name: 4. Start Cloudflared Tunnel for Trojan
+        run: |
+          cd xray
+          nohup ./cloudflared tunnel --url http://127.0.0.1:8080 \
+            > cf_trojan.log 2> cf_trojan_err.log &
+          sleep 15
+          echo "✅ Trojan tunnel started"
+
+      - name: 5. Start Cloudflared Tunnel for VLESS
+        run: |
+          cd xray
+          nohup ./cloudflared tunnel --url http://127.0.0.1:8081 \
+            > cf_vless.log 2> cf_vless_err.log &
+          sleep 15
+          echo "✅ VLESS tunnel started"
+
+      - name: 6. Get Tunnel URLs
+        run: |
+          cd xray
+          TROJAN_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cf_trojan_err.log | head -n 1)
+          VLESS_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cf_vless_err.log | head -n 1)
+
+          if [ -z "$TROJAN_URL" ] || [ -z "$VLESS_URL" ]; then
+            echo "❌ Could not get one of the URLs"
+            cat cf_trojan_err.log
+            cat cf_vless_err.log
+            exit 1
+          fi
+
+          echo "TROJAN_URL=$TROJAN_URL" >> $GITHUB_ENV
+          echo "VLESS_URL=$VLESS_URL" >> $GITHUB_ENV
+
+          echo "✅ Trojan URL: $TROJAN_URL"
+          echo "✅ VLESS URL: $VLESS_URL"
+
+      - name: 7. Update Cloudflare Worker with Custom Domain
+        env:
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+        run: |
+          cd xray
+          ACC_ID="e96a2dd0c1de68077e282bab0f5e64af"
+          WORKER_NAME="my-vpn-worker"  # نام ورکر که دامنه شخصی بهش وصله
+
+          WORKER_CODE=$(cat <<EOF
+          addEventListener('fetch', event => {
+            event.respondWith(handleRequest(event.request));
+          });
+
+          async function handleRequest(request) {
+            const url = new URL(request.url);
+
+            const trojanUrl = "${TROJAN_URL}";
+            const vlessUrl = "${VLESS_URL}";
+
+            let target = trojanUrl;
+
+            if (url.pathname.startsWith('/vless')) {
+              target = vlessUrl;
+              url.pathname = url.pathname.replace('/vless', '/');
+            }
+
+            const newUrl = target + url.pathname + url.search;
+
+            return fetch(new Request(newUrl, {
+              method: request.method,
+              headers: request.headers,
+              body: request.body
+            }));
+          }
+          EOF
+          )
+
+          RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/${ACC_ID}/workers/scripts/${WORKER_NAME}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
+            -H "Content-Type: application/javascript" \
+            --data-raw "$WORKER_CODE")
+
+          if echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✅ Worker updated"
+          else
+            echo "❌ Worker update failed"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+      - name: 8. Generate and Send All Links
         run: |
           UUID="5aa2ebe1-5114-4bc3-aefa-935807433e70"
-          DOMAIN="udududu.miradig.ir"
-          
-          VLESS_LINK="vless://${UUID}@${DOMAIN}:443?path=%2F&security=tls&encryption=none&type=ws&sni=${DOMAIN}#VLESS_WS"
-          
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ VLESS + WebSocket + TLS"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
-          echo "🔹 لینک VLESS:"
-          echo "$VLESS_LINK"
-          echo ""
-          echo "🔹 تنظیمات دستی:"
-          echo "   پروتکل: VLESS"
-          echo "   آدرس: $DOMAIN"
-          echo "   پورت: 443"
-          echo "   UUID: $UUID"
-          echo "   Network: ws"
-          echo "   Path: /"
-          echo "   TLS: فعال"
-          echo "   SNI: $DOMAIN"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          PASSWORD="5aa2ebe1-5114-4bc3-aefa-935807433e70"
+          SERVER_ID="server1"
+          SECRET="fasjfajf09wjf9jawfj0j"
+          WORKER_DOMAIN="asdoijaosd.taban-learn.ir"
 
-      - name: Keep Alive
+          TROJAN_DOMAIN=$(echo "$TROJAN_URL" | sed 's|https://||')
+          VLESS_DOMAIN=$(echo "$VLESS_URL" | sed 's|https://||')
+
+          # 1. Trojan Tunnel
+          L1="trojan://${PASSWORD}@${TROJAN_DOMAIN}:443?path=%2Ftrojan&security=tls&type=ws#Trojan_Tunnel"
+
+          # 2. VLESS Tunnel
+          L2="vless://${UUID}@${VLESS_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_Tunnel"
+
+          # 3. Trojan via Worker (custom domain)
+          L3="trojan://${PASSWORD}@${WORKER_DOMAIN}:443?path=/&security=tls&type=ws#Trojan_Worker"
+
+          # 4. VLESS via Worker (custom domain)
+          L4="vless://${UUID}@${WORKER_DOMAIN}:443?path=%2Fvless&security=tls&encryption=none&type=ws#VLESS_Worker"
+
+          # Send all
+          for LINK in "$L1" "$L2" "$L3" "$L4"; do
+            curl -s -X POST "https://miradig.ir/update" \
+              -H "Authorization: Bearer $SECRET" \
+              -H "Content-Type: application/json" \
+              -d "{\"server_id\":\"$SERVER_ID\",\"vmess\":\"$LINK\"}"
+            echo "Sent: $LINK"
+          done
+
+          echo "✅ All 4 links sent"
+
+      - name: 9. Keep Alive (6 hours)
         run: |
           cd xray
           for i in {1..360}; do
             sleep 60
+
+            # Check Xray
             if ! pgrep -f "xray run" > /dev/null; then
-              ./xray run -config config.json &
+              nohup ./xray run -config config.json > xray.log 2>&1 &
             fi
+
+            # Check Cloudflared tunnels
+            if ! pgrep -f "cloudflared tunnel.*8080" > /dev/null; then
+              nohup ./cloudflared tunnel --url http://127.0.0.1:8080 \
+                > cf_trojan.log 2> cf_trojan_err.log &
+            fi
+
+            if ! pgrep -f "cloudflared tunnel.*8081" > /dev/null; then
+              nohup ./cloudflared tunnel --url http://127.0.0.1:8081 \
+                > cf_vless.log 2> cf_vless_err.log &
+            fi
+
             echo "[$i/360] Alive"
           done
