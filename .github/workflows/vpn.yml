@@ -104,7 +104,7 @@ jobs:
         run: |
           cd xray
           ACC_ID="e96a2dd0c1de68077e282bab0f5e64af"
-          WORKER_NAME="my-vpn-worker"
+          WORKER_NAME="iuhniuhihiuhiuhvpntaban"
 
           WORKER_CODE=$(cat <<EOF
           addEventListener('fetch', event => {
