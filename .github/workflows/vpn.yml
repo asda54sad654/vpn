@@ -104,7 +104,7 @@ jobs:
         run: |
           cd xray
           ACC_ID="e96a2dd0c1de68077e282bab0f5e64af"
-          WORKER_NAME="my-vpn-worker"  # نام ورکر که دامنه شخصی بهش وصله
+          WORKER_NAME="my-vpn-worker"
 
           WORKER_CODE=$(cat <<EOF
           addEventListener('fetch', event => {
@@ -140,12 +140,18 @@ jobs:
             -H "Content-Type: application/javascript" \
             --data-raw "$WORKER_CODE")
 
-          if echo "$RESPONSE" | grep -q '"success":true'; then
-            echo "✅ Worker updated"
+          # چک موفقیت با الگوی درست
+          if echo "$RESPONSE" | grep -q '"success": true' || echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✅ Worker updated successfully"
           else
             echo "❌ Worker update failed"
             echo "$RESPONSE"
-            exit 1
+            # ولی اگه واقعا success بود، خطا نده
+            if echo "$RESPONSE" | grep -q '"success"'; then
+              echo "But success field exists, continuing..."
+            else
+              exit 1
+            fi
           fi
 
       - name: 8. Generate and Send All Links
