@@ -68,7 +68,7 @@ jobs:
           cd xray
           nohup ./cloudflared tunnel --url http://127.0.0.1:8080 \
             > cf_trojan.log 2> cf_trojan_err.log &
-          sleep 5
+          sleep 15
           echo "✅ Trojan tunnel started"
 
       - name: 5. Start Cloudflared Tunnel for VLESS
@@ -76,7 +76,7 @@ jobs:
           cd xray
           nohup ./cloudflared tunnel --url http://127.0.0.1:8081 \
             > cf_vless.log 2> cf_vless_err.log &
-          sleep 5
+          sleep 15
           echo "✅ VLESS tunnel started"
 
       - name: 6. Get Tunnel URLs
